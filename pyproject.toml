@@ -1,0 +1,26 @@
+# pyproject.toml
+
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muskingumcunge"
+version = "0.0.1"
+description = "Python implementation of the Muskingum-Cunge routing model."
+readme = "README.md"
+authors = [{ name = "Scott Lawson", email = "scott.lawson@uvm.edu" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["Channel Routing", "muskingum", "hydrology", "hydrologic", "model", "channel", "routing"]
+dependencies = [
+    "numpy",
+]
+requires-python = ">=3.9"
+
+[project.urls]
+Homepage = "https://github.com/sclaw/muskingum-cunge"
