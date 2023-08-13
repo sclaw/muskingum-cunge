@@ -10,7 +10,7 @@ duration = 10
 inflows = parabolic_hydrograph_generator(timestamps, peak, duration)
 
 # Build reach
-reach = TrapezoidalReach(100, 200, 0.1, 0.001, 1000)
+reach = TrapezoidalReach(100, 100, 0.1, 0.001, 1000)
 
 # Route flows
 outflows = reach.route_hydrograph(inflows, 0.1)
