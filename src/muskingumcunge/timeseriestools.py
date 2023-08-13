@@ -8,5 +8,5 @@ def parabolic_hydrograph_generator(timestamps, peak, duration):
                   [0]])
     coeffs = np.linalg.inv(a).dot(b)
     flows = (coeffs[0] * (timestamps ** 2)) + (coeffs[1] * timestamps)
-    flows[flows < 0] = 0
+    flows[flows < 0] = 1
     return flows
