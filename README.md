@@ -39,6 +39,9 @@ plt.legend()
 plt.tight_layout()
 plt.show()
 ```
+
+![](images/simple_routing.png "Simple Routing Example")
+
 Current functonality of this package includes
 - Calculation of channel geometry (top width, area, wetted perimeter, and hydraulic radius) as a function of stage
 - Derivation of stage-discharge rating curve and Muskingum Parameters
