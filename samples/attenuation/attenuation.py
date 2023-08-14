@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 from muskingumcunge.reach import BaseReach
@@ -40,6 +41,7 @@ def slope_vs_attenuation():
     ax.set_xlabel('Slope (m/m)')
     ax.set_xscale('log')
     plt.legend(title='mannings n')
+    plt.savefig(os.path.join(os.path.dirname(__file__), 'attenuation.png'), dpi=300)
     plt.show()
 
 slope_vs_attenuation()
