@@ -51,6 +51,7 @@ class BaseReach:
         tmp_area[0] = tmp_area[1]  # Approximation to make this computationally stable at stage=0
         c = (self.rating_curve['discharge'] / tmp_area) * k_prime
         c[0] = c[1]  # Approximation to make this computationally stable at stage=0
+
         self.muskingum_params['k'] = self.reach_length / c
         self.muskingum_params['k'] /= (60 * 60)  # Convert seconds to hours
         self.muskingum_params['x'] = (1 / 2) - (self.rating_curve['discharge'] / (2 * c * self.geometry['top_width'] * self.slope * self.reach_length))
@@ -71,7 +72,7 @@ class BaseReach:
             c2 = ((2 * (1 - x_tmp)) - (dt / k_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
 
             tmp_out = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
-            tmp_out = max(0, tmp_out)
+            tmp_out = max(1, tmp_out)
             outflows.append(tmp_out)
 
         return outflows
@@ -100,4 +101,30 @@ class TrapezoidalReach(BaseReach):
         geom['dpdy'] = np.repeat(2, self.resolution)
         geom['dpdy'] = (geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]) / (geom['stage'][1:] - geom['stage'][:-1])
         geom['dpdy'] = np.append(geom['dpdy'], geom['dpdy'][-1])
+
+class USACERectangle(BaseReach):
+    """ Equations from EM 1110-2-1417
+    https://www.publications.usace.army.mil/portals/76/publications/engineermanuals/em_1110-2-1417.pdf
+    """
+    
+    def generate_geometry(self):
+        geom = self.geometry
+        geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
+        geom['area'] = geom['stage'] * self.width
+        self.alpha = (1 / self.mannings_n) * (self.slope ** 0.5) * (self.width ** (-2 / 3))
+        self.m = (5 / 3)
+
+    def generate_rating_curve(self):
+        self.rating_curve['stage'] = self.geometry['stage']
+        self.rating_curve['discharge'] = self.alpha * (self.geometry['area'] ** self.m)
+
+    def generate_muskingum_params(self):
+        self.muskingum_params['stage'] = self.geometry['stage']
+        c = self.alpha * self.m * (self.geometry['area'] ** (self.m - 1))
+        c[0] = c[1]
+
+        self.muskingum_params['k'] = self.reach_length / c
+        self.muskingum_params['k'] /= (60 * 60)  # Convert seconds to hours
+        self.muskingum_params['x'] = (1 / 2) - (self.rating_curve['discharge'] / (2 * c * self.width * self.slope * self.reach_length))
+        self.muskingum_params['x'][self.muskingum_params['x'] < 0] = 0
 
