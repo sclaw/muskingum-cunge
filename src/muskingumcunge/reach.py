@@ -102,6 +102,46 @@ class TrapezoidalReach(BaseReach):
         geom['dpdy'] = (geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]) / (geom['stage'][1:] - geom['stage'][:-1])
         geom['dpdy'] = np.append(geom['dpdy'], geom['dpdy'][-1])
 
+class CompoundReach(BaseReach):
+
+    def __init__(self, bottom_width, side_slope, bankfull_depth, floodplain_width, mannings_n, slope, reach_length, max_stage=10, stage_resolution=50):
+        self.bottom_width = bottom_width
+        self.side_slope = side_slope
+        self.bankfull_depth = bankfull_depth
+        assert floodplain_width >= self.bottom_width + (self.side_slope * self.bankfull_depth), 'floodplain width smaller than channel width at bankfull depth'
+        self.floodplain_width = floodplain_width
+        self.mannings_n = mannings_n
+        self.slope = slope
+        self.reach_length = reach_length
+        self.max_stage = max_stage
+        self.resolution = stage_resolution
+
+        self.calculate_parameters()
+    
+    def generate_geometry(self):
+        geom = self.geometry
+        geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
+        geom['top_width'] = self.bottom_width + (geom['stage'] * self.side_slope)
+        geom['area'] = (((geom['stage'] * self.side_slope) + (2 * self.bottom_width)) / 2) * geom['stage']
+        geom['wetted_perimeter'] = ((((geom['stage'] * self.side_slope) ** 2) + (geom['stage'] ** 2)) ** 0.5) + self.bottom_width
+
+        # Add compound channel
+        geom['top_width'][geom['stage'] >= self.bankfull_depth] = self.floodplain_width
+        area_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['area'])
+        area_after_bkf = area_at_bkf + (self.floodplain_width * (geom['stage'] - self.bankfull_depth))
+        geom['area'][geom['stage'] > self.bankfull_depth] = area_after_bkf[geom['stage'] > self.bankfull_depth]
+        p_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['wetted_perimeter'])
+        tw_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['top_width'])
+        p_after_bkf = p_at_bkf + (2 * (geom['stage'] - self.bankfull_depth)) + (self.floodplain_width - tw_at_bkf)
+        geom['wetted_perimeter'][geom['stage'] > self.bankfull_depth] = p_after_bkf[geom['stage'] > self.bankfull_depth]
+
+        geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
+        geom['mannings_n'] = np.repeat(self.mannings_n, self.resolution)
+        geom['dpdy'] = np.repeat(2, self.resolution)
+        geom['dpdy'] = (geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]) / (geom['stage'][1:] - geom['stage'][:-1])
+        geom['dpdy'] = np.append(geom['dpdy'], geom['dpdy'][-1])
+
+
 class USACERectangle(BaseReach):
     """ Equations from EM 1110-2-1417
     https://www.publications.usace.army.mil/portals/76/publications/engineermanuals/em_1110-2-1417.pdf
