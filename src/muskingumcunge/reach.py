@@ -22,47 +22,29 @@ class BaseReach:
         self.max_stage = max_stage
         self.resolution = stage_resolution
 
-        self.calculate_parameters()
-
-
-    def calculate_parameters(self):
         self.generate_geometry()
-        self.generate_rating_curve()
-        self.generate_muskingum_params()
 
     def generate_geometry(self):
         geom = self.geometry
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
         geom['top_width'] = np.repeat(self.width, self.resolution)
+        geom['log_width'] = np.log(geom['top_width'])
         geom['area'] = geom['stage'] * geom['top_width']
         geom['wetted_perimeter'] = self.width + (2 * geom['stage'])
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
         geom['mannings_n'] = np.repeat(self.mannings_n, self.resolution)
-        geom['dpdy'] = np.repeat(2, self.resolution)
+        geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
+        geom['log_q'] = np.log(geom['discharge'])
+        dq = geom['discharge'][1:] - geom['discharge'][:-1]
+        da = geom['area'][1:] - geom['area'][:-1]
+        dq_da = dq / da
+        geom['celerity'] = np.append(dq_da, dq_da[-1])
 
-    def generate_rating_curve(self):
-        self.rating_curve['stage'] = self.geometry['stage']
-        self.rating_curve['discharge'] = (1 / self.geometry['mannings_n']) * self.geometry['area'] * (self.geometry['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
-
-    def generate_muskingum_params(self):
-        self.muskingum_params['stage'] = self.geometry['stage']
-        k_prime = (5 / 3) - ((2 / 3) * (self.geometry['area'] / (self.geometry['top_width'] * self.geometry['wetted_perimeter'])) * self.geometry['dpdy'])
-        tmp_area = self.geometry['area']
-        self.muskingum_params['celerity'] = (self.rating_curve['discharge'] / tmp_area) * k_prime
-        self.muskingum_params['celerity'][0] = 0
-
-        self.muskingum_params['k'] = self.reach_length / self.muskingum_params['celerity']
-        self.muskingum_params['k'][0] = self.muskingum_params['k'][1]
-        self.muskingum_params['k'] /= (60 * 60)  # Convert seconds to hours
-        self.muskingum_params['x'] = (1 / 2) - (self.rating_curve['discharge'] / (2 * self.muskingum_params['celerity'] * self.geometry['top_width'] * self.slope * self.reach_length))
-        self.muskingum_params['x'][0] = 1 / 2
-        self.muskingum_params['x'][self.muskingum_params['x'] < 0] = 0
-    
     def calculate_x_ref(self, inflows, dt):
         q_ref = (max(inflows) + min(inflows)) / 2
-        stage_ref = np.interp(q_ref, self.rating_curve['discharge'], self.rating_curve['stage'])
+        stage_ref = np.interp(q_ref, self.geometry['discharge'], self.geometry['stage'])
         b_ref = np.interp(stage_ref, self.geometry['stage'], self.geometry['top_width'])
-        c_ref = np.interp(stage_ref, self.muskingum_params['stage'], self.muskingum_params['celerity'])
+        c_ref = np.interp(stage_ref, self.geometry['stage'], self.geometry['celerity'])
         x_ref = 0.5 * ((c_ref * dt * 60 * 60) + (q_ref / (b_ref * self.slope * c_ref)))
         return x_ref
 
@@ -79,31 +61,40 @@ class BaseReach:
         if self.reach_length > x_ref:
                 print(f'WARNING: reach length {self.reach_length} greater than x_ref of {round(x_ref, 1)}')
         for i in range(len(inflows) - 1):
-            # q_ref = (max(inflows) + min(inflows)) / 2
-            # stage = np.interp(q_ref, self.rating_curve['discharge'], self.rating_curve['stage'])
-            stage = np.interp(inflows[i], self.rating_curve['discharge'], self.rating_curve['stage'])
-            if inflows[i] > max(self.rating_curve['discharge']):
-                print(f'WARNING: inflow {round(inflows[i], 1)} greater than max flowrate of {round(max(self.rating_curve["discharge"]), 1)}')
-            k_tmp = np.interp(stage, self.muskingum_params['stage'], self.muskingum_params['k'])
-            x_tmp = np.interp(stage, self.muskingum_params['stage'], self.muskingum_params['x'])
-            c_tmp = np.interp(stage, self.muskingum_params['stage'], self.muskingum_params['celerity'])
-            max_c = max(max_c, c_tmp)
-            min_c = min(min_c, c_tmp)
+            if inflows[i] > max(self.geometry['discharge']):
+                    print(f'WARNING: inflow {round(inflows[i], 1)} greater than max flowrate of {round(max(self.geometry["discharge"]), 1)}')
+            q_guess = sum([inflows[i], inflows[i - 1], outflows[i - 1]]) / 3
+            last_guess = q_guess * 2
+            counter = 1
+            while abs(last_guess - q_guess) > 0.003:
+                counter += 1
+                last_guess = q_guess
+                q_guess = sum([inflows[i], inflows[i - 1], outflows[i - 1]], q_guess) / 4
 
-            c0 = ((dt / k_tmp) - (2 * x_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
-            c1 = ((dt / k_tmp) + (2 * x_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
-            c2 = ((2 * (1 - x_tmp)) - (dt / k_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
+                # Interpolate
+                log_q_guess = np.log(q_guess)
+                b_tmp = np.exp(np.interp(log_q_guess, self.geometry['log_q'], self.geometry['log_width']))
+                c_tmp = np.interp(log_q_guess, self.geometry['log_q'], self.geometry['celerity'])
 
-            tmp_out = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
-            tmp_out = max(1, tmp_out)
-            outflows.append(tmp_out)
+                k_tmp = (self.reach_length / c_tmp) / (60 * 60)
+                x_tmp = 0.5 - (q_guess / (2 * c_tmp * b_tmp * self.slope * self.reach_length))
+                
+                max_c = max(max_c, c_tmp)
+                min_c = min(min_c, c_tmp)
+
+                c0 = ((dt / k_tmp) - (2 * x_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
+                c1 = ((dt / k_tmp) + (2 * x_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
+                c2 = ((2 * (1 - x_tmp)) - (dt / k_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
+
+                q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
+                
+            q_guess = max(min(inflows), q_guess)
+            outflows.append(q_guess)
 
         min_travel_time = (self.reach_length / max_c) / (60 * 60)
         if min_travel_time < dt:
             print('dt too large')
             print(f'Minimum travel time is {min_travel_time} hours')
-        # print(f'Max celerity = {max_c}')
-        # print(f'Min celerity = {min_c}')
         return outflows
     
 class TrapezoidalReach(BaseReach):
