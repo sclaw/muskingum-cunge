@@ -48,24 +48,47 @@ class BaseReach:
         self.muskingum_params['stage'] = self.geometry['stage']
         k_prime = (5 / 3) - ((2 / 3) * (self.geometry['area'] / (self.geometry['top_width'] * self.geometry['wetted_perimeter'])) * self.geometry['dpdy'])
         tmp_area = self.geometry['area']
-        tmp_area[0] = tmp_area[1]  # Approximation to make this computationally stable at stage=0
-        c = (self.rating_curve['discharge'] / tmp_area) * k_prime
-        c[0] = c[1]  # Approximation to make this computationally stable at stage=0
+        self.muskingum_params['celerity'] = (self.rating_curve['discharge'] / tmp_area) * k_prime
+        self.muskingum_params['celerity'][0] = 0
 
-        self.muskingum_params['k'] = self.reach_length / c
+        self.muskingum_params['k'] = self.reach_length / self.muskingum_params['celerity']
+        self.muskingum_params['k'][0] = self.muskingum_params['k'][1]
         self.muskingum_params['k'] /= (60 * 60)  # Convert seconds to hours
-        self.muskingum_params['x'] = (1 / 2) - (self.rating_curve['discharge'] / (2 * c * self.geometry['top_width'] * self.slope * self.reach_length))
+        self.muskingum_params['x'] = (1 / 2) - (self.rating_curve['discharge'] / (2 * self.muskingum_params['celerity'] * self.geometry['top_width'] * self.slope * self.reach_length))
+        self.muskingum_params['x'][0] = 1 / 2
         self.muskingum_params['x'][self.muskingum_params['x'] < 0] = 0
+    
+    def calculate_x_ref(self, inflows, dt):
+        q_ref = (max(inflows) + min(inflows)) / 2
+        stage_ref = np.interp(q_ref, self.rating_curve['discharge'], self.rating_curve['stage'])
+        b_ref = np.interp(stage_ref, self.geometry['stage'], self.geometry['top_width'])
+        c_ref = np.interp(stage_ref, self.muskingum_params['stage'], self.muskingum_params['celerity'])
+        x_ref = 0.5 * ((c_ref * dt * 60 * 60) + (q_ref / (b_ref * self.slope * c_ref)))
+        return x_ref
+
 
     def route_hydrograph(self, inflows, dt):
+        if np.argmax(inflows) < 20:
+            print('dt too large')
+            print(f'hydrograph peak of {max(inflows)} is at index {np.argmax(inflows)}')
         outflows = list()
         outflows.append((inflows[0]))
+        max_c = 0
+        min_c = 99999
+        x_ref = self.calculate_x_ref(inflows, dt)
+        if self.reach_length > x_ref:
+                print(f'WARNING: reach length {self.reach_length} greater than x_ref of {round(x_ref, 1)}')
         for i in range(len(inflows) - 1):
+            # q_ref = (max(inflows) + min(inflows)) / 2
+            # stage = np.interp(q_ref, self.rating_curve['discharge'], self.rating_curve['stage'])
             stage = np.interp(inflows[i], self.rating_curve['discharge'], self.rating_curve['stage'])
-            if stage > self.max_stage:
-                print(f'WARNING: stage {round(stage, 1)} greater than max stage of {round(self.max_stage, 1)}')
+            if inflows[i] > max(self.rating_curve['discharge']):
+                print(f'WARNING: inflow {round(inflows[i], 1)} greater than max flowrate of {round(max(self.rating_curve["discharge"]), 1)}')
             k_tmp = np.interp(stage, self.muskingum_params['stage'], self.muskingum_params['k'])
             x_tmp = np.interp(stage, self.muskingum_params['stage'], self.muskingum_params['x'])
+            c_tmp = np.interp(stage, self.muskingum_params['stage'], self.muskingum_params['celerity'])
+            max_c = max(max_c, c_tmp)
+            min_c = min(min_c, c_tmp)
 
             c0 = ((dt / k_tmp) - (2 * x_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
             c1 = ((dt / k_tmp) + (2 * x_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
@@ -75,6 +98,12 @@ class BaseReach:
             tmp_out = max(1, tmp_out)
             outflows.append(tmp_out)
 
+        min_travel_time = (self.reach_length / max_c) / (60 * 60)
+        if min_travel_time < dt:
+            print('dt too large')
+            print(f'Minimum travel time is {min_travel_time} hours')
+        # print(f'Max celerity = {max_c}')
+        # print(f'Min celerity = {min_c}')
         return outflows
     
 class TrapezoidalReach(BaseReach):
