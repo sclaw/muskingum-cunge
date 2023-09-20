@@ -26,7 +26,7 @@ class BaseReach:
 
     def generate_geometry(self):
         geom = self.geometry
-        geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
+        geom['stage'] = np.linspace(0.001, self.max_stage, self.resolution)
         geom['top_width'] = np.repeat(self.width, self.resolution)
         geom['log_width'] = np.log(geom['top_width'])
         geom['area'] = geom['stage'] * geom['top_width']
@@ -49,7 +49,7 @@ class BaseReach:
         return x_ref
 
 
-    def route_hydrograph(self, inflows, dt):
+    def route_hydrograph(self, inflows, dt, max_iter=1000):
         if np.argmax(inflows) < 20:
             print('dt too large')
             print(f'hydrograph peak of {max(inflows)} is at index {np.argmax(inflows)}')
@@ -78,6 +78,8 @@ class BaseReach:
 
                 k_tmp = (self.reach_length / c_tmp) / (60 * 60)
                 x_tmp = 0.5 - (q_guess / (2 * c_tmp * b_tmp * self.slope * self.reach_length))
+                x_tmp = max(0, x_tmp)
+                x_tmp = min(0.5, x_tmp)
                 
                 max_c = max(max_c, c_tmp)
                 min_c = min(min_c, c_tmp)
@@ -87,8 +89,9 @@ class BaseReach:
                 c2 = ((2 * (1 - x_tmp)) - (dt / k_tmp)) / ((2 * (1 - x_tmp)) + (dt / k_tmp))
 
                 q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
-                
-            q_guess = max(min(inflows), q_guess)
+                q_guess = max(min(inflows), q_guess)
+                if counter == max_iter:
+                    last_guess = q_guess
             outflows.append(q_guess)
 
         min_travel_time = (self.reach_length / max_c) / (60 * 60)
@@ -108,19 +111,23 @@ class TrapezoidalReach(BaseReach):
         self.max_stage = max_stage
         self.resolution = stage_resolution
 
-        self.calculate_parameters()
+        self.generate_geometry()
     
     def generate_geometry(self):
         geom = self.geometry
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
         geom['top_width'] = self.bottom_width + (geom['stage'] * self.side_slope)
+        geom['log_width'] = np.log(geom['top_width'])
         geom['area'] = (((geom['stage'] * self.side_slope) + (2 * self.bottom_width)) / 2) * geom['stage']
         geom['wetted_perimeter'] = ((((geom['stage'] * self.side_slope) ** 2) + (geom['stage'] ** 2)) ** 0.5) + self.bottom_width
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
         geom['mannings_n'] = np.repeat(self.mannings_n, self.resolution)
-        geom['dpdy'] = np.repeat(2, self.resolution)
-        geom['dpdy'] = (geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]) / (geom['stage'][1:] - geom['stage'][:-1])
-        geom['dpdy'] = np.append(geom['dpdy'], geom['dpdy'][-1])
+        geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
+        geom['log_q'] = np.log(geom['discharge'])
+        dq = geom['discharge'][1:] - geom['discharge'][:-1]
+        da = geom['area'][1:] - geom['area'][:-1]
+        dq_da = dq / da
+        geom['celerity'] = np.append(dq_da, dq_da[-1])
 
 class CompoundReach(BaseReach):
 
@@ -136,7 +143,7 @@ class CompoundReach(BaseReach):
         self.max_stage = max_stage
         self.resolution = stage_resolution
 
-        self.calculate_parameters()
+        self.generate_geometry()
     
     def generate_geometry(self):
         geom = self.geometry
@@ -157,10 +164,16 @@ class CompoundReach(BaseReach):
 
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
         geom['mannings_n'] = np.repeat(self.mannings_n, self.resolution)
-        geom['dpdy'] = np.repeat(2, self.resolution)
-        geom['dpdy'] = (geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]) / (geom['stage'][1:] - geom['stage'][:-1])
-        geom['dpdy'] = np.append(geom['dpdy'], geom['dpdy'][-1])
 
+        geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
+        geom['log_q'] = np.log(geom['discharge'])
+
+        dq = geom['discharge'][1:] - geom['discharge'][:-1]
+        da = geom['area'][1:] - geom['area'][:-1]
+        dq_da = dq / da
+        geom['celerity'] = np.append(dq_da, dq_da[-1])
+        
+        geom['log_width'] = np.log(geom['top_width'])
 
 class USACERectangle(BaseReach):
     """ Equations from EM 1110-2-1417
