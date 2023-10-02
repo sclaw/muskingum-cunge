@@ -62,14 +62,12 @@ class BaseReach:
         for i in range(len(inflows) - 1):
             if inflows[i] > max(self.geometry['discharge']):
                     print(f'WARNING: inflow {round(inflows[i], 1)} greater than max flowrate of {round(max(self.geometry["discharge"]), 1)}')
-            # q_guess = sum([inflows[i], inflows[i - 1], outflows[i - 1]]) / 3    # 10/2 this is how we did it
             q_guess = sum([inflows[i], inflows[i + 1], outflows[i]]) / 3
             last_guess = q_guess * 2
             counter = 1
             while abs(last_guess - q_guess) > 0.003:
                 counter += 1
                 last_guess = q_guess.copy()
-                # q_guess = sum([inflows[i], inflows[i - 1], outflows[i - 1]], q_guess) / 4  # 10/2 this is how we did it
                 reach_q = sum([inflows[i], inflows[i + 1], outflows[i], q_guess]) / 4
 
                 # Interpolate
@@ -132,13 +130,14 @@ class TrapezoidalReach(BaseReach):
 
 class CompoundReach(BaseReach):
 
-    def __init__(self, bottom_width, side_slope, bankfull_depth, floodplain_width, mannings_n, slope, reach_length, max_stage=10, stage_resolution=50):
+    def __init__(self, bottom_width, side_slope, bankfull_depth, floodplain_width, channel_n, floodplain_n, slope, reach_length, max_stage=10, stage_resolution=50):
         self.bottom_width = bottom_width
         self.side_slope = side_slope
         self.bankfull_depth = bankfull_depth
         assert floodplain_width >= self.bottom_width + (self.side_slope * self.bankfull_depth), 'floodplain width smaller than channel width at bankfull depth'
         self.floodplain_width = floodplain_width
-        self.mannings_n = mannings_n
+        self.channel_n = channel_n
+        self.floodplain_n = floodplain_n
         self.slope = slope
         self.reach_length = reach_length
         self.max_stage = max_stage
@@ -148,39 +147,34 @@ class CompoundReach(BaseReach):
     
     def generate_geometry(self):
         geom = self.geometry
+
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
         geom['top_width'] = self.bottom_width + (geom['stage'] * self.side_slope)
         geom['area'] = (((geom['stage'] * self.side_slope) + (2 * self.bottom_width)) / 2) * geom['stage']
         geom['wetted_perimeter'] = (((((geom['stage'] * (self.side_slope / 2)) ** 2) + (geom['stage'] ** 2)) ** 0.5) * 2) + self.bottom_width
+        geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
+        geom['discharge'] = (1 / self.channel_n) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
 
         # Add compound channel
-        geom['top_width'][geom['stage'] > self.bankfull_depth] = self.floodplain_width
-        area_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['area'])
-        area_after_bkf = area_at_bkf + (self.floodplain_width * (geom['stage'] - self.bankfull_depth))
-        geom['area'][geom['stage'] > self.bankfull_depth] = area_after_bkf[geom['stage'] > self.bankfull_depth]
-        p_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['wetted_perimeter'])
+        stage_subset = geom['stage'][geom['stage'] > self.bankfull_depth] - self.bankfull_depth
         tw_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['top_width'])
-        p_after_bkf = p_at_bkf + (2 * (geom['stage'] - self.bankfull_depth)) + (self.floodplain_width - tw_at_bkf)
-        geom['wetted_perimeter'][geom['stage'] > self.bankfull_depth] = p_after_bkf[geom['stage'] > self.bankfull_depth]
+        a_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['area'])
+        q_at_bkf = np.interp(self.bankfull_depth, geom['stage'], geom['discharge'])
+        area = stage_subset * self.floodplain_width
+        perimeter = (self.floodplain_width - tw_at_bkf) + (2 * stage_subset)
+        radius = area / perimeter
+        discharge = (1 / self.floodplain_n) * area * (radius ** (2 / 3)) * (self.slope ** 0.5)
 
-        geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
-        geom['mannings_n'] = np.repeat(self.mannings_n, self.resolution)
-
-        geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
-
-        geom['log_q'] = np.log(geom['discharge'])
+        geom['wetted_perimeter'][geom['stage'] > self.bankfull_depth] = perimeter
+        geom['area'][geom['stage'] > self.bankfull_depth] = area + a_at_bkf
+        geom['top_width'][geom['stage'] > self.bankfull_depth] = self.floodplain_width
+        geom['discharge'][geom['stage'] > self.bankfull_depth] = discharge + q_at_bkf
 
         dq = geom['discharge'][1:] - geom['discharge'][:-1]
         da = geom['area'][1:] - geom['area'][:-1]
         dq_da = dq / da
         geom['celerity'] = np.append(dq_da, dq_da[-1])
         geom['celerity'][geom['celerity'] < 0.0001] = 0.0001
-        #  "correct" discharge.  Only to make model stable, may not represent reality
-        last = 0
-        for i in range(len(geom['discharge'])):
-            if geom['discharge'][i] < last:
-                geom['discharge'][i] = last + 1
-            last = geom['discharge'][i]
         geom['log_q'] = np.log(geom['discharge'])
 
         geom['log_width'] = np.log(geom['top_width'])
