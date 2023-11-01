@@ -86,3 +86,11 @@ def duration_over_threshold_hydrograph_2(timestamps, a, b, ri, da_sqkm, peak_rat
     # Ensure peak flowrate
     out_flowrates[np.argmax(out_flowrates)] = q_ri
     return out_flowrates
+
+def scs_hydrograph(peak, duration, timesteps):
+    t_tp_ordinates = np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2, 2.2, 2.4, 2.6, 2.8, 3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5])
+    q_qp_ordinates = np.array([0, 0.03, 0.1, 0.19, 0.31, 0.47, 0.66, 0.82, 0.93, 0.99, 1, 0.99, 0.93, 0.86, 0.78, 0.68, 0.56, 0.46, 0.39, 0.33, 0.28, 0.207, 0.147, 0.107, 0.077, 0.055, 0.04, 0.029, 0.021, 0.015, 0.011, 0.005, 0])
+
+    tmp_flows = q_qp_ordinates * peak
+    tmp_times = t_tp_ordinates * duration
+    return np.interp(timesteps, tmp_times, tmp_flows)
