@@ -1,5 +1,5 @@
 import numpy as np
-
+from .route import croute
 
 class BaseReach:
     geometry = {'stage': None, 
@@ -47,6 +47,12 @@ class BaseReach:
         x_ref = 0.5 * ((c_ref * dt * 60 * 60) + (q_ref / (b_ref * self.slope * c_ref)))
         return x_ref
 
+    def route_hydrograph_c(self, inflows, dt):
+        reach_length = self.reach_length
+        slope = self.slope
+        geometry = self.geometry
+
+        return croute(inflows, dt, reach_length, slope, geometry)
 
     def route_hydrograph(self, inflows, dt, max_iter=1000, verbose=False):
         if np.argmax(inflows) < 20:
