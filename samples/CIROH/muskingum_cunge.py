@@ -8,6 +8,29 @@ from scipy.ndimage import gaussian_filter1d
 import time
 
 
+### Static Data ###
+T_TP_ORDINATES = np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2, 2.2, 2.4, 2.6, 2.8, 3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5])
+Q_QP_ORDINATES = np.array([0, 0.03, 0.1, 0.19, 0.31, 0.47, 0.66, 0.82, 0.93, 0.99, 1, 0.99, 0.93, 0.86, 0.78, 0.68, 0.56, 0.46, 0.39, 0.33, 0.28, 0.207, 0.147, 0.107, 0.077, 0.055, 0.04, 0.029, 0.021, 0.015, 0.011, 0.005, 0])
+PEAK_FLOW_REGRESSION = {
+    'Q2': lambda da: 48.2 * (da ** 0.869) / 35.3147,  # Cubic Meters per Second.  From Olson 2014
+    'Q10': lambda da: 101 * (da ** 0.847) / 35.3147,
+    'Q50': lambda da: 164 * (da ** 0.833) / 35.3147,
+    'Q100': lambda da: 197 * (da ** 0.827) / 35.3147}
+DURATION_REGRESSION = {
+    'Q2_Short': lambda da: 94.5 * (da ** 0.268) / 60,  # Hours.  From Lawson 2023
+    'Q2_Medium': lambda da: 94.5 * (da ** 0.384) / 60,
+    'Q2_Long': lambda da: 94.5 * (da ** 0.511) / 60,
+    'Q10_Short': lambda da: 314 * (da ** 0.268) / 60,
+    'Q10_Medium': lambda da: 314 * (da ** 0.384) / 60,
+    'Q10_Long': lambda da: 314 * (da ** 0.511) / 60,
+    'Q50_Short': lambda da: 534 * (da ** 0.268) / 60,
+    'Q50_Medium': lambda da: 534 * (da ** 0.384) / 60,
+    'Q50_Long': lambda da: 534 * (da ** 0.511) / 60,
+    'Q100_Short': lambda da: 628 * (da ** 0.268) / 60,
+    'Q100_Medium': lambda da: 628 * (da ** 0.384) / 60,
+    'Q100_Long': lambda da: 628 * (da ** 0.511) / 60
+}
+
 def create_run_template():
     path_dict = {'elevation_path': 'path',
                  'area_path': 'path',
@@ -35,52 +58,13 @@ def load_run(path):
     return data_dict, reach_data, run_meta
 
 
-def add_bathymetry(geom, da, slope, shape='rectangle'):
-    filter_arg = np.argmin(geom['elevation'] < 0.015)
-    top_width = geom['area'][filter_arg]
-    top_width = max(1, top_width)
-    flowrate = (0.4962 * da) / 35.3147
-    n = 0.035
-    stage_space = np.linspace(0, 10, 1000)
-
-    if shape == 'trapezoid':
-        area = (0.8 * top_width) * stage_space  # Follum 2023 assumed Bw=0.6Tw
-        perimeter = (0.6 * top_width) + (2 * (((stage_space ** 2) + ((0.2 * top_width) ** 2)) ** 0.5))
-    elif shape == 'rectangle':
-        area = (stage_space * top_width)
-        perimeter = (top_width + (2 * stage_space))
-
-    flowrate_space = (1 / n) * (stage_space * top_width) * (slope ** 0.5) * ((area / perimeter) ** (2 / 3))
-    add_depth = np.interp(flowrate, flowrate_space, stage_space)
-    add_volume = np.interp(flowrate, flowrate_space, area)
-    add_perimeter = np.interp(flowrate, flowrate_space, perimeter)
-
-    geom = {i: geom[i][filter_arg:] for i in geom}
-
-    geom['area'] = np.insert(geom['area'], 0, perimeter[0])
-
-    geom['elevation'] -= geom['elevation'][0]
-    geom['elevation'] += add_depth
-    geom['elevation'] = np.insert(geom['elevation'], 0, 0)
-
-    geom['volume'] -= geom['volume'][0]
-    geom['volume'] += add_volume
-    geom['volume'] = np.insert(geom['volume'], 0, 0)
-
-    geom['perimeter'] -= geom['perimeter'][0]
-    geom['perimeter'] += add_perimeter
-    geom['perimeter'] = np.insert(geom['perimeter'], 0, 0)
-
-    return geom
-
-
 def variance(q, t):
     n = np.sum(q)
     t_bar = (q * t) / n
     return np.sum(((t - t_bar) ** 2) * q) / (n - 1)
 
 
-def execute(run_path):
+def execute(run_path, debug_plots=False):
     ### temp docstring.  Method to route several hydrographs through all reaches in a dataset and record relevant metrics
     # Load run info
     geometry, reach_data, run_meta = load_run(run_path)
@@ -93,36 +77,19 @@ def execute(run_path):
         valid_columns = valid_columns.intersection(tmp_cols)
     valid_columns = sorted(valid_columns)
 
-    # Temporary debugging override
-    # valid_columns = ['4300103002217']
-    # valid_columns = ['4300102001933']
-    # valid_columns = ['4300102003621']
-
     # Setup Hydrographs
-    t_tp_ordinates = np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2, 2.2, 2.4, 2.6, 2.8, 3, 3.2, 3.4, 3.6, 3.8, 4, 4.5, 5])
-    q_qp_ordinates = np.array([0, 0.03, 0.1, 0.19, 0.31, 0.47, 0.66, 0.82, 0.93, 0.99, 1, 0.99, 0.93, 0.86, 0.78, 0.68, 0.56, 0.46, 0.39, 0.33, 0.28, 0.207, 0.147, 0.107, 0.077, 0.055, 0.04, 0.029, 0.021, 0.015, 0.011, 0.005, 0])
-    q2 = lambda da: 48.2 * (da ** 0.869) / 35.3147
-    q10 = lambda da: 101 * (da ** 0.847) / 35.3147
-    q50 = lambda da: 164 * (da ** 0.833) / 35.3147
-    q100 = lambda da: 197 * (da ** 0.827) / 35.3147
-    q_funcs = [q2, q10, q50, q100]
-    q_labels = ['q2', 'q10', 'q50', 'q100']
-    durations = [5, 10, 15]
-    d_labels = ['short', 'med', 'long']
-    hydrographs = list()
-    for func, q_label in zip(q_funcs, q_labels):
-            for length, d_label in zip(durations, d_labels):
-                label = '_'.join([q_label, d_label])
-                attenuation_label = '_'.join([label, 'att'])
-                lag_label = '_'.join([label, 'lag'])
-                reach_data[attenuation_label] = np.nan
-                reach_data[lag_label] = np.nan
-                h_dict = {'attenuation_label': attenuation_label,
-                          'lag_label': lag_label,
-                          'function': func,
-                          'length': length}
-                hydrographs.append(h_dict)
-    dt = 0.03
+    hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
+    results_dict = dict()
+    results_dict['reach'] = list()
+    results_dict['DASqKm'] = list()
+    results_dict['slope'] = list()
+    for h in hydrographs:
+        results_dict['_'.join([h, 'lag'])] = list()
+        results_dict['_'.join([h, 'attenuation'])] = list()
+
+    # Set model run params
+    dt = run_meta['dt']
+    timesteps = np.arange(0, run_meta['runtime'], dt)
 
     # Route
     counter = 1
@@ -130,34 +97,18 @@ def execute(run_path):
     for reach in valid_columns:
         print(f'{counter} / {len(valid_columns)} | {round((len(valid_columns) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
+        
         # Subset data
         tmp_geom = {i: geometry[i][reach].to_numpy() for i in geometry}
         tmp_meta = reach_data.loc[reach]
-        # slope = tmp_meta['slope(m/m)']
-        # length = tmp_meta['length(m)']
-        # da = tmp_meta['DA(sqkm)']
         slope = tmp_meta['slope']
         length = tmp_meta['length']
         da = tmp_meta['TotDASqKm']
-        tmp_geom['elevation'] = np.linspace(0, 5 * (0.26 * (da ** 0.287)), 999)  # Temporary until we fix utilities.py
 
         # Convert 3D to 2D perspective
         tmp_geom['area'] = tmp_geom['area'] / length
         tmp_geom['volume'] = tmp_geom['volume'] / length
         tmp_geom['perimeter'] = tmp_geom['perimeter'] / length
-
-        # Add bathymetry
-        cache_el = tmp_geom['elevation'].copy()
-        cache_width = tmp_geom['area'].copy()
-
-        tmp_geom = add_bathymetry(tmp_geom, da, slope)
-
-        # fig, ax = plt.subplots()
-        # ax.plot(cache_width, cache_el, label='og')
-        # # ax.plot(tmp_geom['area'], tmp_geom['elevation'] - (tmp_geom['elevation'][-1] - cache_el[-1]), label='added', ls='dashed')
-        # ax.plot(tmp_geom['area'], tmp_geom['elevation'], label='added', ls='dashed')
-        # plt.legend()
-        # plt.show()
 
         # Create reach
         mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['elevation'], tmp_geom['area'], tmp_geom['volume'], tmp_geom['perimeter'])
@@ -167,66 +118,56 @@ def execute(run_path):
         dq_da = dqs / das
         dq_da[0] = dq_da[1]
         dq_da = np.append(dq_da, dq_da[-1])
-        # fig, ax = plt.subplots()
-        # ax.plot(mc_reach.geometry['stage'], dq_da, label='raw', alpha=0.7)
 
-        kernel = 50
         dq_da[np.isnan(dq_da)] = 0.0001
-        # dq_da_cum = np.cumsum(dq_da)
-        # dq_da_cum = dq_da_cum[kernel:] - dq_da_cum[:-kernel]
-        # dq_da_cum /= kernel
-        # dq_da_2 = dq_da
-        # dq_da_2[int(kernel / 2):-int(kernel / 2)] = dq_da_cum
-        # dq_da_2[:int(kernel / 2)] = np.linspace(dq_da_2[0], dq_da_2[int(kernel / 2)], int(kernel / 2))
-        # dq_da_2[-int(kernel / 2):] = dq_da_2[-int(kernel / 2):].mean()
         dq_da_2 = gaussian_filter1d(dq_da, 15)
         dq_da_2[dq_da_2 < 0.0001] = 0.0001
         dq_da_2[abs((dq_da - dq_da[0]) / dq_da[0]) < 0.1] = dq_da[0]
-        # ax.plot(mc_reach.geometry['stage'], dq_da_2, label='smooth')
         mc_reach.geometry['celerity'] = dq_da_2
 
-        # kernel = 100
-        # dqs = mc_reach.geometry['discharge'][1::kernel] - mc_reach.geometry['discharge'][:-1:kernel]
-        # das = mc_reach.geometry['area'][1::kernel] - mc_reach.geometry['area'][:-1:kernel]
-        # dq_da = dqs / das
-        # dq_da[0] = dq_da[1]
-        # ax.plot(mc_reach.geometry['stage'][::kernel], dq_da, label='smooth')
-
-
-        # plt.legend()
-        # plt.show()
-
         # Route hydrographs
-        run_sum = 0
-        for h_dict in hydrographs:
-            tmp_flows = q_qp_ordinates * h_dict['function'](da)
-            tmp_times = t_tp_ordinates * h_dict['length']
-            timesteps = np.arange(0, 48, dt)
+        results_dict['reach'].append(reach)
+        results_dict['DASqKm'].append(da)
+        results_dict['slope'].append(slope)
+        for hydrograph in hydrographs:
+            # Calculate hydrograph ordinates
+            magnitude = hydrograph.split('_')[0]
+            tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
+            tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
-            outflows = mc_reach.route_hydrograph_c(inflows, dt)            
-
+            # Route hydrograph
+            outflows = mc_reach.route_hydrograph_c(inflows, dt)
+            
+            # Log results
             pct_attenuation = (inflows.max() - outflows.max()) / inflows.max()
             lag = (np.argmax(outflows) - np.argmax(inflows)) * dt
-            reach_data.loc[reach, h_dict['attenuation_label']] = pct_attenuation
-            reach_data.loc[reach, h_dict['lag_label']] = lag
+            results_dict['_'.join([hydrograph, 'lag'])].append(lag)
+            results_dict['_'.join([hydrograph, 'attenuation'])].append(pct_attenuation)
 
-            var1 = variance(outflows, timesteps)
-            var2 = variance(inflows, timesteps)
-            print(f"{h_dict['attenuation_label'].ljust(20)} {round(var1 / var2, 5)}")
-            fig, ax = plt.subplots()
-            ax.plot(timesteps, inflows, label='inflows')
-            ax.plot(timesteps, outflows, label='outflows')
-            plt.title(h_dict['attenuation_label'])
-            plt.legend()
-            plt.show()
+            # Debug
+            if debug_plots:
+                fig, axs = plt.subplots(ncols=3, figsize=(12, 4))
+                axs[0].plot(timesteps, inflows, label='inflow')
+                axs[0].plot(timesteps, outflows, label='inflow')
+                axs[0].text(0.95, 0.95, f'attenuation: {pct_attenuation}\nlag: {lag}', transform=axs[0].transAxes, horizontalalignment='right', verticalalignment='top')
+                axs[0].set(xlabel='Time (hours)', ylabel='Flow (cms)')
 
-            run_sum += pct_attenuation
-        print((run_sum * 100) / 12)
+                axs[1].plot(mc_reach.geometry['discharge'], mc_reach.geometry['celerity'], c='k')
+                axs[1].axvline(max(inflows), c='k', ls='dashed')
+                axs[1].set(xlabel='Discharge (cms)', ylabel='Celerity (m/s)')
 
-    reach_data = reach_data.loc[valid_columns]
-    reach_data.to_csv(run_meta['out_path'])
+                axs[2].plot(mc_reach.geometry['area'], mc_reach.geometry['stage'], c='k')
+                axs[2].axhline(np.interp(max(inflows), mc_reach.geometry['discharge'], mc_reach.geometry['stage']), c='k', ls='dashed')
+                axs[2].set(xlabel='Width (m)', ylabel='Stage (m)')
+                fig.tight_layout()
+                fig.suptitle(reach)
+                plt.show()
+
+    out_data = pd.DataFrame(results_dict)
+    os.makedirs(os.path.dirname(run_meta['out_path']), exist_ok=True)
+    out_data.to_csv(run_meta['out_path'])
 
 if __name__ == '__main__':
-    run_path = 'muskingum-cunge/samples/CIROH/run_2.json'
-    execute(run_path)
+    run_path = 'samples/CIROH/run_3.json'
+    execute(run_path, debug_plots=False)
