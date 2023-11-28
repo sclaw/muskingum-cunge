@@ -129,6 +129,11 @@ def execute(run_path, debug_plots=False):
         results_dict['reach'].append(reach)
         results_dict['DASqKm'].append(da)
         results_dict['slope'].append(slope)
+        if debug_plots:
+            fig, axs = plt.subplots(ncols=3, nrows=2, figsize=(12, 6))
+            axs[0, 1].plot(mc_reach.geometry['discharge'], mc_reach.geometry['celerity'], c='k')
+            axs[0, 2].plot(mc_reach.geometry['top_width'], mc_reach.geometry['stage'], c='k')
+            ax2 = axs[1, 2].twinx()
         for hydrograph in hydrographs:
             # Calculate hydrograph ordinates
             magnitude = hydrograph.split('_')[0]
@@ -147,27 +152,41 @@ def execute(run_path, debug_plots=False):
 
             # Debug
             if debug_plots:
-                fig, axs = plt.subplots(ncols=3, figsize=(12, 4))
-                axs[0].plot(timesteps, inflows, label='inflow')
-                axs[0].plot(timesteps, outflows, label='inflow')
-                axs[0].text(0.95, 0.95, f'attenuation: {pct_attenuation}\nlag: {lag}', transform=axs[0].transAxes, horizontalalignment='right', verticalalignment='top')
-                axs[0].set(xlabel='Time (hours)', ylabel='Flow (cms)')
+                if magnitude == 'Q2':
+                    c = '#007ACC'
+                elif magnitude == 'Q10':
+                    c = '#D7263D'
+                elif magnitude == 'Q50':
+                    c = '#99C24D'
+                elif magnitude == 'Q100':
+                    c = '#6A0572'
+                axs[0, 0].plot(timesteps, inflows, c=c)
+                axs[1, 0].plot(timesteps, outflows, c=c)
+                axs[1, 2].scatter(max(inflows), pct_attenuation, c='k', marker='x')
+                ax2.scatter(max(inflows), (inflows.max() - outflows.max()), fc='none', ec='gray')
+                axs[1, 1].scatter(max(inflows), lag, c='k', marker='x')
+                axs[0, 1].axvline(max(inflows), c='k', ls='dashed')
+                axs[0, 2].axhline(np.interp(max(inflows), mc_reach.geometry['discharge'], mc_reach.geometry['stage']), c='k', ls='dashed')
 
-                axs[1].plot(mc_reach.geometry['discharge'], mc_reach.geometry['celerity'], c='k')
-                axs[1].axvline(max(inflows), c='k', ls='dashed')
-                axs[1].set(xlabel='Discharge (cms)', ylabel='Celerity (m/s)')
-
-                axs[2].plot(mc_reach.geometry['area'], mc_reach.geometry['stage'], c='k')
-                axs[2].axhline(np.interp(max(inflows), mc_reach.geometry['discharge'], mc_reach.geometry['stage']), c='k', ls='dashed')
-                axs[2].set(xlabel='Width (m)', ylabel='Stage (m)')
-                fig.tight_layout()
-                fig.suptitle(reach)
-                plt.show()
+        # Debug
+        if debug_plots:            
+            axs[0, 0].set(xlabel='Time (hours)', ylabel='Flow (cms)')
+            axs[0, 0].text(0.95, 0.95, 'Inflow', transform=axs[0, 0].transAxes, horizontalalignment='right', verticalalignment='top')
+            axs[1, 0].set(xlabel='Time (hours)', ylabel='Flow (cms)')
+            axs[1, 0].text(0.95, 0.95, 'Outflow', transform=axs[1, 0].transAxes, horizontalalignment='right', verticalalignment='top')
+            axs[0, 1].set(xlabel='Discharge (cms)', ylabel='Celerity (m/s)')
+            axs[0, 2].set(xlabel='Width (m)', ylabel='Stage (m)')
+            axs[1, 2].set(xlabel='Discharge (cms)', ylabel='Percent Attenuation (x)')
+            ax2.set(ylabel='Raw Attenuation (o)')
+            axs[1, 1].set(xlabel='Discharge (cms)', ylabel='Lag')
+            fig.suptitle(f'{reach} | slope={slope} m/m | DA={da} sqkm')
+            fig.tight_layout()
+            plt.show()
 
     out_data = pd.DataFrame(results_dict)
     os.makedirs(os.path.dirname(run_meta['out_path']), exist_ok=True)
     out_data.to_csv(run_meta['out_path'])
 
 if __name__ == '__main__':
-    run_path = 'samples/CIROH/run_3.json'
-    execute(run_path, debug_plots=False)
+    run_path = 'samples/CIROH/unit_test.json'
+    execute(run_path, debug_plots=True)
