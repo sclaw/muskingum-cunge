@@ -85,11 +85,8 @@ def execute(run_path, debug_plots=False):
     results_dict['slope'] = list()
     for h in hydrographs:
         results_dict['_'.join([h, 'lag'])] = list()
-        results_dict['_'.join([h, 'attenuation'])] = list()
-
-    # Set model run params
-    dt = run_meta['dt']
-    timesteps = np.arange(0, run_meta['runtime'], dt)
+        results_dict['_'.join([h, 'pct_attenuation'])] = list()
+        results_dict['_'.join([h, 'raw_attenuation'])] = list()
 
     # Route
     counter = 1
@@ -139,16 +136,19 @@ def execute(run_path, debug_plots=False):
             magnitude = hydrograph.split('_')[0]
             tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
+            timesteps = np.arange(0, 1.5*DURATION_REGRESSION[hydrograph](da), run_meta['dt'])
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
             # Route hydrograph
-            outflows = mc_reach.route_hydrograph_c(inflows, dt)
+            outflows = mc_reach.route_hydrograph_c(inflows, run_meta['dt'])
             
             # Log results
-            pct_attenuation = (inflows.max() - outflows.max()) / inflows.max()
-            lag = (np.argmax(outflows) - np.argmax(inflows)) * dt
+            raw_attenuation = inflows.max() - outflows.max()
+            pct_attenuation = raw_attenuation / inflows.max()
+            lag = (np.argmax(outflows) - np.argmax(inflows)) * run_meta['dt']
             results_dict['_'.join([hydrograph, 'lag'])].append(lag)
-            results_dict['_'.join([hydrograph, 'attenuation'])].append(pct_attenuation)
+            results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
+            results_dict['_'.join([hydrograph, 'raw_attenuation'])].append(raw_attenuation)
 
             # Debug
             if debug_plots:
@@ -163,7 +163,7 @@ def execute(run_path, debug_plots=False):
                 axs[0, 0].plot(timesteps, inflows, c=c)
                 axs[1, 0].plot(timesteps, outflows, c=c)
                 axs[1, 2].scatter(max(inflows), pct_attenuation, c='k', marker='x')
-                ax2.scatter(max(inflows), (inflows.max() - outflows.max()), fc='none', ec='gray')
+                ax2.scatter(max(inflows), raw_attenuation, fc='none', ec='gray')
                 axs[1, 1].scatter(max(inflows), lag, c='k', marker='x')
                 axs[0, 1].axvline(max(inflows), c='k', ls='dashed')
                 axs[0, 2].axhline(np.interp(max(inflows), mc_reach.geometry['discharge'], mc_reach.geometry['stage']), c='k', ls='dashed')
@@ -188,5 +188,5 @@ def execute(run_path, debug_plots=False):
     out_data.to_csv(run_meta['out_path'])
 
 if __name__ == '__main__':
-    run_path = 'samples/CIROH/unit_test.json'
-    execute(run_path, debug_plots=True)
+    run_path = 'samples/CIROH/run_3.json'
+    execute(run_path, debug_plots=False)
