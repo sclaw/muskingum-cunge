@@ -93,4 +93,8 @@ def scs_hydrograph(peak, duration, timesteps):
 
     tmp_flows = q_qp_ordinates * peak
     tmp_times = t_tp_ordinates * duration
-    return np.interp(timesteps, tmp_times, tmp_flows)
+
+    out_flowrates = np.interp(timesteps, tmp_times, tmp_flows)
+    # Ensure peak flowrate
+    out_flowrates[np.argmax(out_flowrates)] = peak
+    return out_flowrates
