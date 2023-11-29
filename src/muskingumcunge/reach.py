@@ -55,19 +55,24 @@ class BaseReach:
         return croute(inflows, dt, reach_length, slope, geometry)
 
     def route_hydrograph(self, inflows, dt, max_iter=1000, verbose=False):
+        peak_loc_error = False
+        peak_val_error = False
+        dt_error = False
         if np.argmax(inflows) < 20:
             print('dt too large')
             print(f'hydrograph peak of {max(inflows)} is at index {np.argmax(inflows)}')
+            peak_loc_error = True
         outflows = list()
         outflows.append((inflows[0]))
         max_c = 0
         min_c = 99999
         x_ref = self.calculate_x_ref(inflows, dt)
         if self.reach_length > x_ref and verbose:
-                print(f'WARNING: reach length {self.reach_length} greater than x_ref of {round(x_ref, 1)}')
+            print(f'WARNING: reach length {self.reach_length} greater than x_ref of {round(x_ref, 1)}')
+        if max(inflows) > max(self.geometry['discharge']):
+            print(f'WARNING: inflow {round(max(inflows), 1)} greater than max flowrate of {round(max(self.geometry["discharge"]), 1)}')
+            peak_val_error = True
         for i in range(len(inflows) - 1):
-            if inflows[i] > max(self.geometry['discharge']):
-                    print(f'WARNING: inflow {round(inflows[i], 1)} greater than max flowrate of {round(max(self.geometry["discharge"]), 1)}')
             q_guess = sum([inflows[i], inflows[i + 1], outflows[i]]) / 3
             last_guess = q_guess * 2
             counter = 1
@@ -103,7 +108,8 @@ class BaseReach:
         if min_travel_time < dt:
             print('dt too large')
             print(f'Minimum travel time is {min_travel_time} hours')
-        return np.array(outflows)
+            dt_error = True
+        return np.array(outflows), [peak_loc_error, peak_val_error, dt_error]
     
 class TrapezoidalReach(BaseReach):
 

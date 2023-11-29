@@ -31,14 +31,19 @@ def croute(py_inflows, dt, reach_length, slope, geometry, max_iter=1000, verbose
     dt: cython.float = dt
     slope: cython.float = slope
     min_travel_time: cython.float
+    peak_loc_error: cython.bint = 0
+    peak_val_error: cython.bint = 0
+    dt_error: cython.bint = 0
 
     outflows[0] = inflows[0]
 
     if np.argmax(inflows) < 20:
         print('dt too large')
         print(f'hydrograph peak of {max(inflows)} is at index {np.argmax(inflows)}')
+        peak_loc_error = 1
     if np.max(inflows) > np.max(geom_q):
         print(f'WARNING: inflow {round(np.max(inflows), 1)} greater than max flowrate of {round(np.max(geom_q), 1)}')
+        peak_val_error = 1
     
     for i in range(series_length - 1):
         q_guess = (inflows[i] + inflows[i + 1] + outflows[i]) / 3
@@ -76,4 +81,5 @@ def croute(py_inflows, dt, reach_length, slope, geometry, max_iter=1000, verbose
     if min_travel_time < dt:
         print('dt too large')
         print(f'Minimum travel time is {min_travel_time} hours')
-    return np.array(outflows)
+        dt_error = 1
+    return np.array(outflows), [peak_loc_error, peak_val_error, dt_error]
