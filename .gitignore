@@ -1,3 +1,5 @@
 dist/
 *.egg-info/
 working
+src/muskingumcunge/route.c*
+src/muskingumcunge/route.html
