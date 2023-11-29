@@ -80,7 +80,7 @@ def execute(run_path, debug_plots=False):
     # Setup Hydrographs
     hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
     results_dict = dict()
-    results_dict['reach'] = list()
+    results_dict['ReachCode'] = list()
     results_dict['DASqKm'] = list()
     results_dict['slope'] = list()
     for h in hydrographs:
@@ -184,6 +184,7 @@ def execute(run_path, debug_plots=False):
             plt.show()
 
     out_data = pd.DataFrame(results_dict)
+    out_data = out_data.set_index('ReachCode')
     os.makedirs(os.path.dirname(run_meta['out_path']), exist_ok=True)
     out_data.to_csv(run_meta['out_path'])
 
