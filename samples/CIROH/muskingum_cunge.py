@@ -76,6 +76,7 @@ def execute(run_path, debug_plots=False):
         tmp_cols = dataset.columns[(dataset != 0).any(axis=0)]
         valid_columns = valid_columns.intersection(tmp_cols)
     valid_columns = sorted(valid_columns)
+    valid_columns = ['4300108000015','4300103001544', '4300103004224', '4300107001632', '4300108006151', '4300103001342', '4300102006820', '4300103003575', '4300108001804', '4300101001766', '4300103004201', '4300108006451', '4300108010065', '4300108009146', '4300102002584', '4300105002588', '4300103003747', '4300107003106']
 
     # Setup Hydrographs
     hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
@@ -83,6 +84,9 @@ def execute(run_path, debug_plots=False):
     results_dict['ReachCode'] = list()
     results_dict['DASqKm'] = list()
     results_dict['slope'] = list()
+    results_dict['peak_loc_error'] = list()
+    results_dict['peak_val_error'] = list()
+    results_dict['dt_error'] = list()
     for h in hydrographs:
         results_dict['_'.join([h, 'lag'])] = list()
         results_dict['_'.join([h, 'pct_attenuation'])] = list()
@@ -123,9 +127,12 @@ def execute(run_path, debug_plots=False):
         mc_reach.geometry['celerity'] = dq_da_2
 
         # Route hydrographs
-        results_dict['reach'].append(reach)
+        results_dict['ReachCode'].append(reach)
         results_dict['DASqKm'].append(da)
         results_dict['slope'].append(slope)
+        results_dict['peak_loc_error'].append(False)
+        results_dict['peak_val_error'].append(False)
+        results_dict['dt_error'].append(False)
         if debug_plots:
             fig, axs = plt.subplots(ncols=3, nrows=2, figsize=(12, 6))
             axs[0, 1].plot(mc_reach.geometry['discharge'], mc_reach.geometry['celerity'], c='k')
@@ -136,11 +143,11 @@ def execute(run_path, debug_plots=False):
             magnitude = hydrograph.split('_')[0]
             tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
-            timesteps = np.arange(0, 1.5*DURATION_REGRESSION[hydrograph](da), run_meta['dt'])
+            timesteps = np.arange(0, 3*DURATION_REGRESSION[hydrograph](da), run_meta['dt'])
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
             # Route hydrograph
-            outflows = mc_reach.route_hydrograph_c(inflows, run_meta['dt'])
+            outflows, errors = mc_reach.route_hydrograph_c(inflows, run_meta['dt'])
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
@@ -149,6 +156,9 @@ def execute(run_path, debug_plots=False):
             results_dict['_'.join([hydrograph, 'lag'])].append(lag)
             results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
             results_dict['_'.join([hydrograph, 'raw_attenuation'])].append(raw_attenuation)
+            results_dict['peak_loc_error'][-1] = results_dict['peak_loc_error'][-1] or errors[0]
+            results_dict['peak_val_error'][-1] = results_dict['peak_val_error'][-1] or errors[1]
+            results_dict['dt_error'][-1] = results_dict['dt_error'][-1] or errors[2]
 
             # Debug
             if debug_plots:
@@ -190,4 +200,4 @@ def execute(run_path, debug_plots=False):
 
 if __name__ == '__main__':
     run_path = 'samples/CIROH/run_3.json'
-    execute(run_path, debug_plots=False)
+    execute(run_path, debug_plots=True)
