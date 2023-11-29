@@ -7,4 +7,4 @@ setup(
 )
 
 ### To build, run:
-### python setup.py build_ext --inplace
+### python setup_cyth.py build_ext --inplace
