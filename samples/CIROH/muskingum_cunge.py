@@ -64,19 +64,13 @@ def variance(q, t):
     return np.sum(((t - t_bar) ** 2) * q) / (n - 1)
 
 
-def execute(run_path, debug_plots=False):
+def execute(meta_path, debug_plots=False):
     ### temp docstring.  Method to route several hydrographs through all reaches in a dataset and record relevant metrics
     # Load run info
-    geometry, reach_data, run_meta = load_run(run_path)
-
-    # Clean input data
-    valid_columns = set(reach_data.index)
-    for col in geometry:
-        dataset = geometry[col]
-        tmp_cols = dataset.columns[(dataset != 0).any(axis=0)]
-        valid_columns = valid_columns.intersection(tmp_cols)
-    valid_columns = sorted(valid_columns)
-    valid_columns = ['4300108000015','4300103001544', '4300103004224', '4300107001632', '4300108006151', '4300103001342', '4300102006820', '4300103003575', '4300108001804', '4300101001766', '4300103004201', '4300108006451', '4300108010065', '4300108009146', '4300102002584', '4300105002588', '4300103003747', '4300107003106']
+    with open(meta_path, 'r') as f:
+        run_dict = json.loads(f.read())
+    geometry = {i: pd.read_csv(os.path.join(run_dict['geometry_directory'], f'{i}.csv')) for i in run_dict['fields_of_interest']}
+    reach_data = pd.read_csv(run_dict['reach_meta_path'])
 
     # Setup Hydrographs
     hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
@@ -88,15 +82,16 @@ def execute(run_path, debug_plots=False):
     results_dict['peak_val_error'] = list()
     results_dict['dt_error'] = list()
     for h in hydrographs:
-        results_dict['_'.join([h, 'lag'])] = list()
+        results_dict['_'.join([h, 'reach_length'])] = list()
         results_dict['_'.join([h, 'pct_attenuation'])] = list()
-        results_dict['_'.join([h, 'raw_attenuation'])] = list()
+        results_dict['_'.join([h, 'diffusion_number'])] = list()
 
     # Route
     counter = 1
     t_start = time.perf_counter()
-    for reach in valid_columns:
-        print(f'{counter} / {len(valid_columns)} | {round((len(valid_columns) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
+    reaches = reach_data['ReachCode']
+    for reach in reaches:
+        print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
         
         # Subset data
@@ -114,6 +109,7 @@ def execute(run_path, debug_plots=False):
         # Create reach
         mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['elevation'], tmp_geom['area'], tmp_geom['volume'], tmp_geom['perimeter'])
 
+        # Smooth celerity
         dqs = mc_reach.geometry['discharge'][1:] - mc_reach.geometry['discharge'][:-1]
         das = mc_reach.geometry['area'][1:] - mc_reach.geometry['area'][:-1]
         dq_da = dqs / das
@@ -143,19 +139,35 @@ def execute(run_path, debug_plots=False):
             magnitude = hydrograph.split('_')[0]
             tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
-            timesteps = np.arange(0, 3*DURATION_REGRESSION[hydrograph](da), run_meta['dt'])
+            dt = (tmp_times[10] / 20) * 60 * 60  # From USACE guidance.  dt may be t_rise / 20
+            timesteps = np.arange(0, 5*DURATION_REGRESSION[hydrograph](da), dt)
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
-            # Route hydrograph
-            outflows, errors = mc_reach.route_hydrograph_c(inflows, run_meta['dt'])
+            # Prepare model run
+            outflows = inflows.copy()
+            t_rise = np.argmax(outflows)
+            peak_loc = t_rise.copy()
+            tmp_length = 0
+
+            while peak_loc < 2 * t_rise:
+                # adjust reach length for model stability
+                tmp_celerity = np.interp(np.log(outflows.max()), mc_reach.geometry['log_q'], mc_reach.geometry['celerity'])
+                length = (dt * 60 * 60) * tmp_celerity
+                mc_reach.reach_length = length
+                tmp_length += length
+
+                # Route hydrograph
+                outflows, errors = mc_reach.route_hydrograph_c(inflows, dt)
+                peak_loc = np.argmax(outflows)
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
             pct_attenuation = raw_attenuation / inflows.max()
-            lag = (np.argmax(outflows) - np.argmax(inflows)) * run_meta['dt']
-            results_dict['_'.join([hydrograph, 'lag'])].append(lag)
+            tmp_diff_number = ((9 * np.pi) / 50) * (((0.035 ** (6 / 5)) * (max(inflows) ** (1 / 5))) / ((slope ** (8 / 5)) * (dt * 20)))
+
+            results_dict['_'.join([hydrograph, 'reach_length'])].append(tmp_length)
             results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
-            results_dict['_'.join([hydrograph, 'raw_attenuation'])].append(raw_attenuation)
+            results_dict['_'.join([hydrograph, 'diffusion_number'])].append(tmp_diff_number)
             results_dict['peak_loc_error'][-1] = results_dict['peak_loc_error'][-1] or errors[0]
             results_dict['peak_val_error'][-1] = results_dict['peak_val_error'][-1] or errors[1]
             results_dict['dt_error'][-1] = results_dict['dt_error'][-1] or errors[2]
@@ -191,13 +203,14 @@ def execute(run_path, debug_plots=False):
             axs[1, 1].set(xlabel='Discharge (cms)', ylabel='Lag')
             fig.suptitle(f'{reach} | slope={slope} m/m | DA={da} sqkm')
             fig.tight_layout()
-            plt.show()
+            fig.savefig(r'G:\floodplainsData\runs\3\working\to_rebecca_12-1\diagnostic_plots\{}.png'.format(reach), dpi=300)
+            # plt.show()
 
     out_data = pd.DataFrame(results_dict)
     out_data = out_data.set_index('ReachCode')
-    os.makedirs(os.path.dirname(run_meta['out_path']), exist_ok=True)
+    os.makedirs(os.path.dirname(run_dict['muskingum_path']), exist_ok=True)
     out_data.to_csv(run_meta['out_path'])
 
 if __name__ == '__main__':
-    run_path = 'samples/CIROH/run_3.json'
-    execute(run_path, debug_plots=True)
+    run_path = r"G:\floodplainsData\runs\4\run_metadata.json"
+    execute(run_path, debug_plots=False)
