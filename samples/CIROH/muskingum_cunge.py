@@ -203,15 +203,6 @@ def execute(meta_path, debug_plots=False):
             axs[1, 1].set(xlabel='Discharge (cms)', ylabel='Lag')
             fig.suptitle(f'{reach} | slope={slope} m/m | DA={da} sqkm')
             fig.tight_layout()
-<<<<<<< HEAD
-            fig.savefig(r"/netfiles/ciroh/floodplainsData/runs/3/muskingum-cunge/diagnostics/{}_lowdt.png".format(reach), dpi=300)
-            plt.show()
-
-    out_data = pd.DataFrame(results_dict)
-    out_data = out_data.set_index('ReachCode')
-    os.makedirs(os.path.dirname(run_meta['out_path']), exist_ok=True)
-    # out_data.to_csv(run_meta['out_path'])
-=======
             fig.savefig(r'G:\floodplainsData\runs\3\working\to_rebecca_12-1\diagnostic_plots\{}.png'.format(reach), dpi=300)
             # plt.show()
 
@@ -219,7 +210,6 @@ def execute(meta_path, debug_plots=False):
     out_data = out_data.set_index('ReachCode')
     os.makedirs(os.path.dirname(run_dict['muskingum_path']), exist_ok=True)
     out_data.to_csv(run_meta['out_path'])
->>>>>>> b85122791eb58e1cb8c1ff71039aead56b9a8b44
 
 if __name__ == '__main__':
     run_path = r"G:\floodplainsData\runs\4\run_metadata.json"
