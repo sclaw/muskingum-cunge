@@ -1,13 +1,13 @@
 {
     "data_paths": {
-          "elevation_path": "G:\\floodplainsData\\runs\\3\\outputs\\el.csv",
-          "area_path": "G:\\floodplainsData\\runs\\3\\outputs\\area.csv",
-          "volume_path": "G:\\floodplainsData\\runs\\3\\outputs\\vol.csv",
-          "perimeter_path": "G:\\floodplainsData\\runs\\3\\outputs\\p.csv",
-          "reach_path": "G:\\floodplainsData\\runs\\3\\reach_data.csv"
+          "elevation_path": "/netfiles/ciroh/floodplainsData/runs/3/outputs/el.csv",
+          "area_path": "/netfiles/ciroh/floodplainsData/runs/3/outputs/area.csv",
+          "volume_path": "/netfiles/ciroh/floodplainsData/runs/3/outputs/vol.csv",
+          "perimeter_path": "/netfiles/ciroh/floodplainsData/runs/3/outputs/p.csv",
+          "reach_path": "/netfiles/ciroh/floodplainsData/runs/3/reach_data.csv"
     },
     "run_meta": {
-          "out_path": "G:\\floodplainsData\\runs\\3\\muskingum-cunge\\mc_out.csv",
+          "out_path": "/netfiles/ciroh/floodplainsData/runs/3/muskingum-cunge/mc_out.csv",
           "reaches_completed": [],
           "run_date": null,
           "dt": 0.01,

@@ -3,3 +3,5 @@ dist/
 working
 src/muskingumcunge/route.c*
 src/muskingumcunge/route.html
+*__pycache__*
+build/
