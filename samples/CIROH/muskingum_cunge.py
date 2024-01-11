@@ -64,21 +64,14 @@ def variance(q, t):
     return np.sum(((t - t_bar) ** 2) * q) / (n - 1)
 
 
-def execute(run_path, debug_plots=False):
+def execute(meta_path, debug_plots=False):
     ### temp docstring.  Method to route several hydrographs through all reaches in a dataset and record relevant metrics
     # Load run info
-    geometry, reach_data, run_meta = load_run(run_path)
+    with open(meta_path, 'r') as f:
+        run_dict = json.loads(f.read())
+    geometry = {i: pd.read_csv(os.path.join(run_dict['geometry_directory'], f'{i}.csv')) for i in run_dict['fields_of_interest']}
+    reach_data = pd.read_csv(run_dict['reach_meta_path'])
 
-    # Clean input data
-    valid_columns = set(reach_data.index)
-    for col in geometry:
-        dataset = geometry[col]
-        tmp_cols = dataset.columns[(dataset != 0).any(axis=0)]
-        valid_columns = valid_columns.intersection(tmp_cols)
-    valid_columns = sorted(valid_columns)
-    valid_columns = ['4300101000139', '4300101000318', '4300101000385', '4300101000389', '4300101000425', '4300101000515', '4300101000545', '4300101000585', '4300101000764', '4300101000878', '4300101000922', '4300101000988', '4300101001076', '4300101001234', '4300101001550', '4300101001569', '4300101001692', '4300101001903', '4300101001905', '4300101001993', '4300101001997', '4300101002410', '4300102000152', '4300102000162', '4300102000225', '4300102000257', '4300102000267', '4300102000306', '4300102000326', '4300102000383', '4300102000427', '4300102000506', '4300102000514', '4300102000702', '4300102000707', '4300102000731', '4300102001022', '4300102001079', '4300102001144', '4300102001313', '4300102001347', '4300102001415', '4300102001462', '4300102001496', '4300102001873', '4300102001903', '4300102001931', '4300102001933', '4300102002052', '4300102002287', '4300102002819', '4300102002822', '4300102003036', '4300102003067', '4300102003080', '4300102003165', '4300102003203', '4300102003212', '4300102003275', '4300102003340', '4300102003543', '4300102003673', '4300102003847', '4300102003934', '4300102003970', '4300102004158', '4300102004542', '4300102004607', '4300102004660', '4300102004716', '4300102004753', '4300102004792', '4300102004925', '4300102004999', '4300102005157', '4300102005217', '4300102005264', '4300102005476', '4300102005511', '4300102005627', '4300102005729', '4300102005738', '4300102006175', '4300102006333', '4300102006373', '4300102006918', '4300102007370', '4300102007396', '4300102007522', '4300102007625', '4300102007687', '4300103000300', '4300103000363', '4300103000600', '4300103000616', '4300103000680', '4300103001266', '4300103001278', '4300103001315', '4300103001333', '4300103001642', '4300103001648', '4300103001868', '4300103002303', '4300103002540', '4300103002563', '4300103002633', '4300103002695', '4300103002755', '4300103002856', '4300103002890', '4300103002899', '4300103002923', '4300103003334', '4300103003532', '4300103003711', '4300103003922', '4300103004087', '4300103004319', '4300103004404', '4300103004590', '4300103004709', '4300103004723', '4300103004801', '4300103005065', '4300103005067', '4300103005178', '4300105000056', '4300105000114', '4300105000175', '4300105000200', '4300105000237', '4300105000326', '4300105000337', '4300105000570', '4300105000614', '4300105000634', '4300105000801', '4300105000831', '4300105000912', '4300105000924', '4300105000947', '4300105000983', '4300105000994', '4300105001009', '4300105001024', '4300105001035', '4300105001268', '4300105001279', '4300105001297', '4300105001305', '4300105001343', '4300105001406', '4300105001500', '4300105001617', '4300105001727', '4300105001792', '4300105001797', '4300105001938', '4300105002021', '4300105002027', '4300105002077', '4300105002203', '4300105002276', '4300105002615', '4300105002637', '4300105002716', '4300105002791', '4300105002985', '4300105002987', '4300105003015', '4300105003041', '4300105003125', '4300105003243', '4300105003249', '4300105003333', '4300105003356', '4300105003381', '4300105003435', '4300105003523', '4300105003918', '4300105003923', '4300105004101', '4300105004174', '4300105004237', '4300105004269', '4300105004275', '4300105004294', '4300105004342', '4300105004429', '4300105004431', '4300105004602', '4300105004699', '4300105004745', '4300105004770', '4300105004780', '4300105004791', '4300105004840', '4300105004944', '4300105004968', '4300105005003', '4300105005012', '4300105005036', '4300105005037', '4300105005059', '4300105005073', '4300105005317', '4300105005326', '4300105005402', '4300105005521', '4300105005614', '4300105005695', '4300105005720', '4300107000229', '4300107000327', '4300107000372', '4300107000787', '4300107000802', '4300107000874', '4300107001001', '4300107001116', '4300107001520', '4300107001562', '4300107001566', '4300107001747', '4300107001812', '4300107002032', '4300107002101', '4300107002237', '4300107002259', '4300107002370', '4300107002393', '4300107002443', '4300107002467', '4300107002617', '4300107002694', '4300107002830', '4300107002993', '4300107002999', '4300108000033', '4300108000264', '4300108000267', '4300108000342', '4300108000397', '4300108000426', '4300108000461', '4300108000706', '4300108000741', '4300108000742', '4300108000824', '4300108000843', '4300108001016', '4300108001288', '4300108001316', '4300108001335', '4300108001368', '4300108001491', '4300108001792', '4300108001959', '4300108002063', '4300108002181', '4300108002302', '4300108002464', '4300108002837', '4300108003229', '4300108003579', '4300108003765', '4300108003817', '4300108003850', '4300108004334', '4300108004648', '4300108005152', '4300108005240', '4300108005325', '4300108005675', '4300108005905', '4300108005918', '4300108005982', '4300108005989', '4300108006171', '4300108006197', '4300108006393', '4300108007023', '4300108008015', '4300108008295', '4300108008308', '4300108008463', '4300108008480', '4300108008628', '4300108008798', '4300108009369', '4300108009494', '4300108009536', '4300108009573', '4300108010639', '4300108010740', '4300108011088', '4300108013124', '4300108013130']
-    
-    
     # Setup Hydrographs
     hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
     results_dict = dict()
@@ -89,15 +82,16 @@ def execute(run_path, debug_plots=False):
     results_dict['peak_val_error'] = list()
     results_dict['dt_error'] = list()
     for h in hydrographs:
-        results_dict['_'.join([h, 'lag'])] = list()
+        results_dict['_'.join([h, 'reach_length'])] = list()
         results_dict['_'.join([h, 'pct_attenuation'])] = list()
-        results_dict['_'.join([h, 'raw_attenuation'])] = list()
+        results_dict['_'.join([h, 'diffusion_number'])] = list()
 
     # Route
     counter = 1
     t_start = time.perf_counter()
-    for reach in valid_columns:
-        print(f'{counter} / {len(valid_columns)} | {round((len(valid_columns) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
+    reaches = reach_data['ReachCode']
+    for reach in reaches:
+        print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
         
         # Subset data
@@ -115,6 +109,7 @@ def execute(run_path, debug_plots=False):
         # Create reach
         mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['elevation'], tmp_geom['area'], tmp_geom['volume'], tmp_geom['perimeter'])
 
+        # Smooth celerity
         dqs = mc_reach.geometry['discharge'][1:] - mc_reach.geometry['discharge'][:-1]
         das = mc_reach.geometry['area'][1:] - mc_reach.geometry['area'][:-1]
         dq_da = dqs / das
@@ -144,19 +139,35 @@ def execute(run_path, debug_plots=False):
             magnitude = hydrograph.split('_')[0]
             tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
-            timesteps = np.arange(0, 3*DURATION_REGRESSION[hydrograph](da), run_meta['dt'])
+            dt = (tmp_times[10] / 20) * 60 * 60  # From USACE guidance.  dt may be t_rise / 20
+            timesteps = np.arange(0, 5*DURATION_REGRESSION[hydrograph](da), dt)
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
-            # Route hydrograph
-            outflows, errors = mc_reach.route_hydrograph_c(inflows, run_meta['dt'])
+            # Prepare model run
+            outflows = inflows.copy()
+            t_rise = np.argmax(outflows)
+            peak_loc = t_rise.copy()
+            tmp_length = 0
+
+            while peak_loc < 2 * t_rise:
+                # adjust reach length for model stability
+                tmp_celerity = np.interp(np.log(outflows.max()), mc_reach.geometry['log_q'], mc_reach.geometry['celerity'])
+                length = (dt * 60 * 60) * tmp_celerity
+                mc_reach.reach_length = length
+                tmp_length += length
+
+                # Route hydrograph
+                outflows, errors = mc_reach.route_hydrograph_c(inflows, dt)
+                peak_loc = np.argmax(outflows)
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
             pct_attenuation = raw_attenuation / inflows.max()
-            lag = (np.argmax(outflows) - np.argmax(inflows)) * run_meta['dt']
-            results_dict['_'.join([hydrograph, 'lag'])].append(lag)
+            tmp_diff_number = ((9 * np.pi) / 50) * (((0.035 ** (6 / 5)) * (max(inflows) ** (1 / 5))) / ((slope ** (8 / 5)) * (dt * 20)))
+
+            results_dict['_'.join([hydrograph, 'reach_length'])].append(tmp_length)
             results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
-            results_dict['_'.join([hydrograph, 'raw_attenuation'])].append(raw_attenuation)
+            results_dict['_'.join([hydrograph, 'diffusion_number'])].append(tmp_diff_number)
             results_dict['peak_loc_error'][-1] = results_dict['peak_loc_error'][-1] or errors[0]
             results_dict['peak_val_error'][-1] = results_dict['peak_val_error'][-1] or errors[1]
             results_dict['dt_error'][-1] = results_dict['dt_error'][-1] or errors[2]
@@ -192,6 +203,7 @@ def execute(run_path, debug_plots=False):
             axs[1, 1].set(xlabel='Discharge (cms)', ylabel='Lag')
             fig.suptitle(f'{reach} | slope={slope} m/m | DA={da} sqkm')
             fig.tight_layout()
+<<<<<<< HEAD
             fig.savefig(r"/netfiles/ciroh/floodplainsData/runs/3/muskingum-cunge/diagnostics/{}_lowdt.png".format(reach), dpi=300)
             plt.show()
 
@@ -199,7 +211,16 @@ def execute(run_path, debug_plots=False):
     out_data = out_data.set_index('ReachCode')
     os.makedirs(os.path.dirname(run_meta['out_path']), exist_ok=True)
     # out_data.to_csv(run_meta['out_path'])
+=======
+            fig.savefig(r'G:\floodplainsData\runs\3\working\to_rebecca_12-1\diagnostic_plots\{}.png'.format(reach), dpi=300)
+            # plt.show()
+
+    out_data = pd.DataFrame(results_dict)
+    out_data = out_data.set_index('ReachCode')
+    os.makedirs(os.path.dirname(run_dict['muskingum_path']), exist_ok=True)
+    out_data.to_csv(run_meta['out_path'])
+>>>>>>> b85122791eb58e1cb8c1ff71039aead56b9a8b44
 
 if __name__ == '__main__':
-    run_path = 'samples/CIROH/run_3.json'
-    execute(run_path, debug_plots=True)
+    run_path = r"G:\floodplainsData\runs\4\run_metadata.json"
+    execute(run_path, debug_plots=False)
