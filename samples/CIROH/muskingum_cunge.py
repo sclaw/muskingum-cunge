@@ -71,6 +71,8 @@ def execute(meta_path, debug_plots=False):
         run_dict = json.loads(f.read())
     geometry = {i: pd.read_csv(os.path.join(run_dict['geometry_directory'], f'{i}.csv')) for i in run_dict['fields_of_interest']}
     reach_data = pd.read_csv(run_dict['reach_meta_path'])
+    reach_data['ReachCode'] = reach_data['ReachCode'].astype(np.int64).astype(str)
+    reach_data = reach_data.set_index('ReachCode')
 
     # Setup Hydrographs
     hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
@@ -89,7 +91,7 @@ def execute(meta_path, debug_plots=False):
     # Route
     counter = 1
     t_start = time.perf_counter()
-    reaches = reach_data['ReachCode']
+    reaches = reach_data.index.to_list()
     for reach in reaches:
         print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
@@ -103,11 +105,11 @@ def execute(meta_path, debug_plots=False):
 
         # Convert 3D to 2D perspective
         tmp_geom['area'] = tmp_geom['area'] / length
-        tmp_geom['volume'] = tmp_geom['volume'] / length
-        tmp_geom['perimeter'] = tmp_geom['perimeter'] / length
+        tmp_geom['vol'] = tmp_geom['vol'] / length
+        tmp_geom['p'] = tmp_geom['p'] / length
 
         # Create reach
-        mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['elevation'], tmp_geom['area'], tmp_geom['volume'], tmp_geom['perimeter'])
+        mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['el'], tmp_geom['area'], tmp_geom['vol'], tmp_geom['p'])
 
         # Smooth celerity
         dqs = mc_reach.geometry['discharge'][1:] - mc_reach.geometry['discharge'][:-1]
@@ -139,7 +141,7 @@ def execute(meta_path, debug_plots=False):
             magnitude = hydrograph.split('_')[0]
             tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
-            dt = (tmp_times[10] / 20) * 60 * 60  # From USACE guidance.  dt may be t_rise / 20
+            dt = (tmp_times[10] / 20)  # From USACE guidance.  dt may be t_rise / 20
             timesteps = np.arange(0, 5*DURATION_REGRESSION[hydrograph](da), dt)
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
@@ -150,14 +152,15 @@ def execute(meta_path, debug_plots=False):
             tmp_length = 0
 
             while peak_loc < 2 * t_rise:
+                # print(f'peak loc {peak_loc} | distance travelled = {round(tmp_length, 1)}', end='\r')
                 # adjust reach length for model stability
                 tmp_celerity = np.interp(np.log(outflows.max()), mc_reach.geometry['log_q'], mc_reach.geometry['celerity'])
-                length = (dt * 60 * 60) * tmp_celerity
+                length = (dt * 60 * 60) * (tmp_celerity * 1.05)
                 mc_reach.reach_length = length
                 tmp_length += length
 
                 # Route hydrograph
-                outflows, errors = mc_reach.route_hydrograph_c(inflows, dt)
+                outflows, errors = mc_reach.route_hydrograph_c(outflows, dt)
                 peak_loc = np.argmax(outflows)
             
             # Log results
@@ -209,8 +212,8 @@ def execute(meta_path, debug_plots=False):
     out_data = pd.DataFrame(results_dict)
     out_data = out_data.set_index('ReachCode')
     os.makedirs(os.path.dirname(run_dict['muskingum_path']), exist_ok=True)
-    out_data.to_csv(run_meta['out_path'])
+    out_data.to_csv(run_dict['muskingum_path'])
 
 if __name__ == '__main__':
-    run_path = r"G:\floodplainsData\runs\4\run_metadata.json"
+    run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/4/run_metadata.json"
     execute(run_path, debug_plots=False)
