@@ -92,6 +92,8 @@ def execute(meta_path, debug_plots=False):
     counter = 1
     t_start = time.perf_counter()
     reaches = reach_data.index.to_list()
+    # reaches = ['4300101000208']
+    reaches = ['4300101000208']
     for reach in reaches:
         print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
@@ -108,10 +110,32 @@ def execute(meta_path, debug_plots=False):
         tmp_geom['vol'] = tmp_geom['vol'] / length
         tmp_geom['p'] = tmp_geom['p'] / length
 
+        # Handle null geometries
+        if np.all(tmp_geom['area'] < 1):
+            print('NULL GEOMETRY')
+            results_dict['ReachCode'].append(reach)
+            results_dict['DASqKm'].append(da)
+            results_dict['slope'].append(slope)
+            results_dict['peak_loc_error'].append(False)
+            results_dict['peak_val_error'].append(False)
+            results_dict['dt_error'].append(False)
+            for hydrograph in hydrographs:
+                results_dict['_'.join([hydrograph, 'reach_length'])].append(tmp_length)
+                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
+                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(tmp_diff_number)
+            continue            
+
         # Create reach
         mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['el'], tmp_geom['area'], tmp_geom['vol'], tmp_geom['p'])
 
         # Smooth celerity
+        q_last = 0
+        for ind, q in enumerate(mc_reach.geometry['discharge']):
+            if q < q_last:
+                mc_reach.geometry['discharge'][ind] = q_last
+            else:
+                q_last = q
+
         dqs = mc_reach.geometry['discharge'][1:] - mc_reach.geometry['discharge'][:-1]
         das = mc_reach.geometry['area'][1:] - mc_reach.geometry['area'][:-1]
         dq_da = dqs / das
@@ -134,6 +158,7 @@ def execute(meta_path, debug_plots=False):
         if debug_plots:
             fig, axs = plt.subplots(ncols=3, nrows=2, figsize=(12, 6))
             axs[0, 1].plot(mc_reach.geometry['discharge'], mc_reach.geometry['celerity'], c='k')
+            axs[0, 1].set_xlim(0, PEAK_FLOW_REGRESSION['Q100'](da))
             axs[0, 2].plot(mc_reach.geometry['top_width'], mc_reach.geometry['stage'], c='k')
             ax2 = axs[1, 2].twinx()
         for hydrograph in hydrographs:
@@ -141,7 +166,7 @@ def execute(meta_path, debug_plots=False):
             magnitude = hydrograph.split('_')[0]
             tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
-            dt = (tmp_times[10] / 20)  # From USACE guidance.  dt may be t_rise / 20
+            dt = (tmp_times[10] / 50)  # From USACE guidance.  dt may be t_rise / 20
             timesteps = np.arange(0, 5*DURATION_REGRESSION[hydrograph](da), dt)
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
@@ -151,17 +176,36 @@ def execute(meta_path, debug_plots=False):
             peak_loc = t_rise.copy()
             tmp_length = 0
 
+            iter = 1
             while peak_loc < 2 * t_rise:
-                # print(f'peak loc {peak_loc} | distance travelled = {round(tmp_length, 1)}', end='\r')
+                if iter > 100:
+                    break
+                iter += 1
                 # adjust reach length for model stability
-                tmp_celerity = np.interp(np.log(outflows.max()), mc_reach.geometry['log_q'], mc_reach.geometry['celerity'])
-                length = (dt * 60 * 60) * (tmp_celerity * 1.05)
+                # tmp_celerity = mc_reach.geometry['celerity'][:np.argmax((mc_reach.geometry['log_q'] > np.log(outflows.max())))].max()  # largest celerity the reach can achieve under the peak inflow
+                # tmp_celerity = np.interp(np.log(outflows.max()), mc_reach.geometry['log_q'], mc_reach.geometry['celerity'])  # this is a better way to do it, even if it causes some warnings
+                # tmp_celerity = np.interp(np.log(outflows[:np.argmax(outflows)]), mc_reach.geometry['log_q'], mc_reach.geometry['celerity']).mean()
+
+                rising_limb_start = np.argmax(outflows > (0.05 * outflows.max()))
+                rising_limb_stop = np.argmax(outflows)
+                tmp_celerity = np.interp(np.log(outflows[rising_limb_start:rising_limb_stop]), mc_reach.geometry['log_q'], mc_reach.geometry['celerity']).mean()
+
+                length = (dt * 60 * 60) * (tmp_celerity)
                 mc_reach.reach_length = length
                 tmp_length += length
 
                 # Route hydrograph
                 outflows, errors = mc_reach.route_hydrograph_c(outflows, dt)
                 peak_loc = np.argmax(outflows)
+
+                # Potential fix for instability
+                for i in range(peak_loc):
+                    if outflows[i + 1] < outflows[i]:
+                        outflows[i + 1] = (outflows[i] + outflows[i + 2]) / 2
+                for i in range(len(outflows) - (peak_loc + 1)):
+                    i += peak_loc
+                    if outflows[i + 1] > outflows[i]:
+                        outflows[i] = (outflows[i - 1] + outflows[i + 1]) / 2
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
@@ -189,7 +233,7 @@ def execute(meta_path, debug_plots=False):
                 axs[1, 0].plot(timesteps, outflows, c=c)
                 axs[1, 2].scatter(max(inflows), pct_attenuation, c='k', marker='x')
                 ax2.scatter(max(inflows), raw_attenuation, fc='none', ec='gray')
-                axs[1, 1].scatter(max(inflows), lag, c='k', marker='x')
+                axs[1, 1].scatter(max(inflows), tmp_length, c='k', marker='x')
                 axs[0, 1].axvline(max(inflows), c='k', ls='dashed')
                 axs[0, 2].axhline(np.interp(max(inflows), mc_reach.geometry['discharge'], mc_reach.geometry['stage']), c='k', ls='dashed')
 
@@ -203,10 +247,10 @@ def execute(meta_path, debug_plots=False):
             axs[0, 2].set(xlabel='Width (m)', ylabel='Stage (m)')
             axs[1, 2].set(xlabel='Discharge (cms)', ylabel='Percent Attenuation (x)')
             ax2.set(ylabel='Raw Attenuation (o)')
-            axs[1, 1].set(xlabel='Discharge (cms)', ylabel='Lag')
-            fig.suptitle(f'{reach} | slope={slope} m/m | DA={da} sqkm')
+            axs[1, 1].set(xlabel='Discharge (cms)', ylabel='Length')
+            fig.suptitle(f'{reach} | slope={slope} m/m | DA={da} sqkm | iterations={iter}')
             fig.tight_layout()
-            fig.savefig(r'G:\floodplainsData\runs\3\working\to_rebecca_12-1\diagnostic_plots\{}.png'.format(reach), dpi=300)
+            fig.savefig(os.path.join(run_dict['muskingum_diagnostics'], f'{reach}.png'), dpi=100)
             # plt.show()
 
     out_data = pd.DataFrame(results_dict)
@@ -216,4 +260,4 @@ def execute(meta_path, debug_plots=False):
 
 if __name__ == '__main__':
     run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/4/run_metadata.json"
-    execute(run_path, debug_plots=False)
+    execute(run_path, debug_plots=True)
