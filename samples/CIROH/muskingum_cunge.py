@@ -30,6 +30,7 @@ DURATION_REGRESSION = {
     'Q100_Medium': lambda da: 628 * (da ** 0.384) / 60,
     'Q100_Long': lambda da: 628 * (da ** 0.511) / 60
 }
+BKF_STAGE_REGRESSION = lambda da: (0.26 * (da ** 0.287))
 
 def create_run_template():
     path_dict = {'elevation_path': 'path',
@@ -92,9 +93,7 @@ def execute(meta_path, debug_plots=False):
     counter = 1
     t_start = time.perf_counter()
     reaches = reach_data.index.to_list()
-    # reaches = ['4300101000208']
-    reaches = ['4300101000208']
-    for reach in reaches:
+    for reach in reaches[:200]:
         print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
         
@@ -156,17 +155,52 @@ def execute(meta_path, debug_plots=False):
         results_dict['peak_val_error'].append(False)
         results_dict['dt_error'].append(False)
         if debug_plots:
-            fig, axs = plt.subplots(ncols=3, nrows=2, figsize=(12, 6))
-            axs[0, 1].plot(mc_reach.geometry['discharge'], mc_reach.geometry['celerity'], c='k')
-            axs[0, 1].set_xlim(0, PEAK_FLOW_REGRESSION['Q100'](da))
-            axs[0, 2].plot(mc_reach.geometry['top_width'], mc_reach.geometry['stage'], c='k')
-            ax2 = axs[1, 2].twinx()
+            fig, axs = plt.subplots(ncols=5, nrows=4, figsize=(16, 10))
+            for row, reg in zip(axs, PEAK_FLOW_REGRESSION):
+                row[0].set_xlabel('Time (hours)')
+                row[1].set_xlabel('Celerity (m/s)')
+                row[2].set_xlabel('Top Width (m)')
+
+                max_q = 1.1 * PEAK_FLOW_REGRESSION[reg](da)
+                for col in range(3):
+                    row[col].set_ylim(0, max_q)
+                    row[col].set_ylabel('Discharge (CMS)')
+
+                row[1].plot(mc_reach.geometry['celerity'], mc_reach.geometry['discharge'], c='k')
+                row[2].plot(mc_reach.geometry['top_width'], mc_reach.geometry['discharge'], c='k')
+
+                row[1].set_xlim(0, np.interp(max_q, mc_reach.geometry['discharge'], mc_reach.geometry['celerity']))
+                row[2].set_xlim(0, np.interp(max_q, mc_reach.geometry['discharge'], mc_reach.geometry['top_width']))
+
+                q2el = lambda q: np.interp(q, mc_reach.geometry['discharge'], mc_reach.geometry['stage'])
+                el2q = lambda el: np.interp(el, mc_reach.geometry['stage'], mc_reach.geometry['discharge'])
+                q2normel = lambda q: np.interp(q, mc_reach.geometry['discharge'], mc_reach.geometry['stage']) / BKF_STAGE_REGRESSION(da)
+                normel2q = lambda el: np.interp(el * BKF_STAGE_REGRESSION(da), mc_reach.geometry['stage'], mc_reach.geometry['discharge'])
+
+                celerity_secax = row[1].secondary_yaxis('right', functions=(q2el, el2q))
+                section_secax = row[2].secondary_yaxis('right', functions=(q2normel, normel2q))
+                celerity_secax.set_ylabel('Stage (m)')
+                section_secax.set_ylabel('Stage / BKF Depth')
+
+            att_gs = axs[0, 3].get_gridspec()
+            for ax in axs[:, 3]:
+                ax.remove()
+            att_ax = fig.add_subplot(att_gs[:, 3])
+            att_ax.set_xlabel('Percent Attenuation')
+            att_ax.set_xlim(0, 50)
+
+            length_gs = axs[0, 4].get_gridspec()
+            for ax in axs[:, 4]:
+                ax.remove()
+            length_ax = fig.add_subplot(length_gs[:, 4])
+            length_ax.set_xlabel('Length for one Time to Rise (m)')     
+        
         for hydrograph in hydrographs:
             # Calculate hydrograph ordinates
             magnitude = hydrograph.split('_')[0]
             tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
-            dt = (tmp_times[10] / 50)  # From USACE guidance.  dt may be t_rise / 20
+            dt = (tmp_times[10] / 20)  # From USACE guidance.  dt may be t_rise / 20
             timesteps = np.arange(0, 5*DURATION_REGRESSION[hydrograph](da), dt)
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
@@ -221,37 +255,42 @@ def execute(meta_path, debug_plots=False):
 
             # Debug
             if debug_plots:
-                if magnitude == 'Q2':
-                    c = '#007ACC'
-                elif magnitude == 'Q10':
-                    c = '#D7263D'
-                elif magnitude == 'Q50':
-                    c = '#99C24D'
-                elif magnitude == 'Q100':
-                    c = '#6A0572'
-                axs[0, 0].plot(timesteps, inflows, c=c)
-                axs[1, 0].plot(timesteps, outflows, c=c)
-                axs[1, 2].scatter(max(inflows), pct_attenuation, c='k', marker='x')
-                ax2.scatter(max(inflows), raw_attenuation, fc='none', ec='gray')
-                axs[1, 1].scatter(max(inflows), tmp_length, c='k', marker='x')
-                axs[0, 1].axvline(max(inflows), c='k', ls='dashed')
-                axs[0, 2].axhline(np.interp(max(inflows), mc_reach.geometry['discharge'], mc_reach.geometry['stage']), c='k', ls='dashed')
+                row_dict = {'Q2': 0, 'Q10': 1, 'Q50': 2, 'Q100': 3}
+                row = row_dict[magnitude]
+                axs[row, 0].plot(timesteps, inflows, c='darkgray')
+                axs[row, 0].plot(timesteps, outflows, c='k')
 
         # Debug
-        if debug_plots:            
-            axs[0, 0].set(xlabel='Time (hours)', ylabel='Flow (cms)')
-            axs[0, 0].text(0.95, 0.95, 'Inflow', transform=axs[0, 0].transAxes, horizontalalignment='right', verticalalignment='top')
-            axs[1, 0].set(xlabel='Time (hours)', ylabel='Flow (cms)')
-            axs[1, 0].text(0.95, 0.95, 'Outflow', transform=axs[1, 0].transAxes, horizontalalignment='right', verticalalignment='top')
-            axs[0, 1].set(xlabel='Discharge (cms)', ylabel='Celerity (m/s)')
-            axs[0, 2].set(xlabel='Width (m)', ylabel='Stage (m)')
-            axs[1, 2].set(xlabel='Discharge (cms)', ylabel='Percent Attenuation (x)')
-            ax2.set(ylabel='Raw Attenuation (o)')
-            axs[1, 1].set(xlabel='Discharge (cms)', ylabel='Length')
+        if debug_plots:
+            width = 0.25
+            position_dict = {'Q2': 0, 'Q10': 1, 'Q50': 2, 'Q100': 3}
+            offset_dict = {'Short': 0, 'Medium': 1, 'Long': 2}
+            loc_list = list()
+            attenuations = list()
+            att_colors = list()
+            lengths = list()
+            for hydrograph in hydrographs:
+                loc = position_dict[hydrograph.split('_')[0]] + (offset_dict[hydrograph.split('_')[1]] * width)
+                loc_list.append(loc)
+                att = results_dict['_'.join([hydrograph, 'pct_attenuation'])][-1] * 100
+                attenuations.append(abs(att))
+                if att < 0:
+                    att_colors.append('k')
+                else:
+                    att_colors.append('darkorange')
+                lengths.append(results_dict['_'.join([hydrograph, 'reach_length'])][-1])
+                
+            att_ax.barh(loc_list, attenuations, width, label=hydrographs, color=att_colors)
+            att_ax.set_yticks(loc_list)
+            att_ax.set_yticklabels(hydrographs)
+            length_ax.barh(loc_list, lengths, width, label=hydrographs)
+            length_ax.set_yticks(loc_list)
+            length_ax.set_yticklabels(hydrographs)
+
             fig.suptitle(f'{reach} | slope={slope} m/m | DA={da} sqkm | iterations={iter}')
             fig.tight_layout()
             fig.savefig(os.path.join(run_dict['muskingum_diagnostics'], f'{reach}.png'), dpi=100)
-            # plt.show()
+            plt.close()
 
     out_data = pd.DataFrame(results_dict)
     out_data = out_data.set_index('ReachCode')
