@@ -5,6 +5,7 @@ import json
 import matplotlib.pyplot as plt
 from muskingumcunge.reach import CustomReach
 from scipy.ndimage import gaussian_filter1d
+from statsmodels.nonparametric.smoothers_lowess import lowess
 import time
 
 
@@ -93,9 +94,13 @@ def execute(meta_path, debug_plots=False):
     counter = 1
     t_start = time.perf_counter()
     reaches = reach_data.index.to_list()
-    for reach in reaches[:200]:
+    reaches = ['4300101000875']
+    for reach in reaches:
         print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
+
+        if debug_plots:
+            fig, axs = plt.subplots(ncols=5, nrows=4, figsize=(16, 10))
         
         # Subset data
         tmp_geom = {i: geometry[i][reach].to_numpy() for i in geometry}
@@ -119,33 +124,36 @@ def execute(meta_path, debug_plots=False):
             results_dict['peak_val_error'].append(False)
             results_dict['dt_error'].append(False)
             for hydrograph in hydrographs:
-                results_dict['_'.join([hydrograph, 'reach_length'])].append(tmp_length)
-                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
-                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(tmp_diff_number)
-            continue            
+                results_dict['_'.join([hydrograph, 'reach_length'])].append(0)
+                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(0)
+                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(0)
+            continue
 
         # Create reach
         mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['el'], tmp_geom['area'], tmp_geom['vol'], tmp_geom['p'])
 
-        # Smooth celerity
-        q_last = 0
-        for ind, q in enumerate(mc_reach.geometry['discharge']):
-            if q < q_last:
-                mc_reach.geometry['discharge'][ind] = q_last
-            else:
-                q_last = q
+        # # Enforce monotonic discharge inreases
+        # q_last = 0
+        # for ind, q in enumerate(mc_reach.geometry['discharge']):
+        #     if q < q_last:
+        #         mc_reach.geometry['discharge'][ind] = q_last
+        #     else:
+        #         q_last = q
 
-        dqs = mc_reach.geometry['discharge'][1:] - mc_reach.geometry['discharge'][:-1]
-        das = mc_reach.geometry['area'][1:] - mc_reach.geometry['area'][:-1]
-        dq_da = dqs / das
-        dq_da[0] = dq_da[1]
-        dq_da = np.append(dq_da, dq_da[-1])
+        # # Calculate celerity
+        # dqs = mc_reach.geometry['discharge'][1:] - mc_reach.geometry['discharge'][:-1]
+        # das = mc_reach.geometry['area'][1:] - mc_reach.geometry['area'][:-1]
+        # dq_da = dqs / das
+        # dq_da[0] = dq_da[1]
+        # dq_da = np.append(dq_da, dq_da[-1])
 
-        dq_da[np.isnan(dq_da)] = 0.0001
-        dq_da_2 = gaussian_filter1d(dq_da, 15)
-        dq_da_2[dq_da_2 < 0.0001] = 0.0001
-        dq_da_2[abs((dq_da - dq_da[0]) / dq_da[0]) < 0.1] = dq_da[0]
-        mc_reach.geometry['celerity'] = dq_da_2
+        # dq_da[np.isnan(dq_da)] = 0.0001
+        # dq_da_2 = gaussian_filter1d(dq_da, 15)
+        # dq_da_2[dq_da_2 < 0.0001] = 0.0001
+        # dq_da_2[abs((dq_da - dq_da[0]) / dq_da[0]) < 0.1] = dq_da[0]
+        # mc_reach.geometry['celerity'] = dq_da_2
+
+
 
         # Route hydrographs
         results_dict['ReachCode'].append(reach)
@@ -155,7 +163,7 @@ def execute(meta_path, debug_plots=False):
         results_dict['peak_val_error'].append(False)
         results_dict['dt_error'].append(False)
         if debug_plots:
-            fig, axs = plt.subplots(ncols=5, nrows=4, figsize=(16, 10))
+            
             for row, reg in zip(axs, PEAK_FLOW_REGRESSION):
                 row[0].set_xlabel('Time (hours)')
                 row[1].set_xlabel('Celerity (m/s)')
@@ -169,8 +177,14 @@ def execute(meta_path, debug_plots=False):
                 row[1].plot(mc_reach.geometry['celerity'], mc_reach.geometry['discharge'], c='k')
                 row[2].plot(mc_reach.geometry['top_width'], mc_reach.geometry['discharge'], c='k')
 
-                row[1].set_xlim(0, np.interp(max_q, mc_reach.geometry['discharge'], mc_reach.geometry['celerity']))
-                row[2].set_xlim(0, np.interp(max_q, mc_reach.geometry['discharge'], mc_reach.geometry['top_width']))
+                if mc_reach.geometry['discharge'].max() > max_q:
+                    max_c = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
+                    max_w = mc_reach.geometry['top_width'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
+                else:
+                    max_c = 1
+                    max_w = 1
+                row[1].set_xlim(0, max_c)
+                row[2].set_xlim(0, max_w)
 
                 q2el = lambda q: np.interp(q, mc_reach.geometry['discharge'], mc_reach.geometry['stage'])
                 el2q = lambda el: np.interp(el, mc_reach.geometry['stage'], mc_reach.geometry['discharge'])
@@ -198,7 +212,13 @@ def execute(meta_path, debug_plots=False):
         for hydrograph in hydrographs:
             # Calculate hydrograph ordinates
             magnitude = hydrograph.split('_')[0]
-            tmp_flows = Q_QP_ORDINATES * PEAK_FLOW_REGRESSION[magnitude](da)
+            peak = PEAK_FLOW_REGRESSION[magnitude](da)
+            if peak > mc_reach.geometry['discharge']:
+                results_dict['_'.join([hydrograph, 'reach_length'])].append(0)
+                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(0)
+                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(0)
+                continue
+            tmp_flows = Q_QP_ORDINATES * peak
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
             dt = (tmp_times[10] / 20)  # From USACE guidance.  dt may be t_rise / 20
             timesteps = np.arange(0, 5*DURATION_REGRESSION[hydrograph](da), dt)
@@ -216,13 +236,19 @@ def execute(meta_path, debug_plots=False):
                     break
                 iter += 1
                 # adjust reach length for model stability
+                # if mc_reach.geometry['discharge'].max() > max_q:
+                #     max_c = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
+                # else:
+                #     max_c = 1
+                # tmp_celerity = max_c
+                tmp_celerity = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
                 # tmp_celerity = mc_reach.geometry['celerity'][:np.argmax((mc_reach.geometry['log_q'] > np.log(outflows.max())))].max()  # largest celerity the reach can achieve under the peak inflow
                 # tmp_celerity = np.interp(np.log(outflows.max()), mc_reach.geometry['log_q'], mc_reach.geometry['celerity'])  # this is a better way to do it, even if it causes some warnings
                 # tmp_celerity = np.interp(np.log(outflows[:np.argmax(outflows)]), mc_reach.geometry['log_q'], mc_reach.geometry['celerity']).mean()
 
-                rising_limb_start = np.argmax(outflows > (0.05 * outflows.max()))
-                rising_limb_stop = np.argmax(outflows)
-                tmp_celerity = np.interp(np.log(outflows[rising_limb_start:rising_limb_stop]), mc_reach.geometry['log_q'], mc_reach.geometry['celerity']).mean()
+                # rising_limb_start = np.argmax(outflows > (0.05 * outflows.max()))
+                # rising_limb_stop = np.argmax(outflows)
+                # tmp_celerity = np.interp(np.log(outflows[rising_limb_start:rising_limb_stop]), mc_reach.geometry['log_q'], mc_reach.geometry['celerity']).mean()
 
                 length = (dt * 60 * 60) * (tmp_celerity)
                 mc_reach.reach_length = length
@@ -233,13 +259,13 @@ def execute(meta_path, debug_plots=False):
                 peak_loc = np.argmax(outflows)
 
                 # Potential fix for instability
-                for i in range(peak_loc):
-                    if outflows[i + 1] < outflows[i]:
-                        outflows[i + 1] = (outflows[i] + outflows[i + 2]) / 2
-                for i in range(len(outflows) - (peak_loc + 1)):
-                    i += peak_loc
-                    if outflows[i + 1] > outflows[i]:
-                        outflows[i] = (outflows[i - 1] + outflows[i + 1]) / 2
+                # for i in range(peak_loc):
+                #     if outflows[i + 1] < outflows[i]:
+                #         outflows[i + 1] = (outflows[i] + outflows[i + 2]) / 2
+                # for i in range(len(outflows) - (peak_loc + 1)):
+                #     i += peak_loc
+                #     if outflows[i + 1] > outflows[i]:
+                #         outflows[i] = (outflows[i - 1] + outflows[i + 1]) / 2
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
@@ -263,7 +289,7 @@ def execute(meta_path, debug_plots=False):
         # Debug
         if debug_plots:
             width = 0.25
-            position_dict = {'Q2': 0, 'Q10': 1, 'Q50': 2, 'Q100': 3}
+            position_dict = {'Q2': 3, 'Q10': 2, 'Q50': 1, 'Q100': 0}
             offset_dict = {'Short': 0, 'Medium': 1, 'Long': 2}
             loc_list = list()
             attenuations = list()

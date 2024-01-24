@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 from .route import croute
 
 class BaseReach:
@@ -76,7 +77,7 @@ class BaseReach:
             q_guess = sum([inflows[i], inflows[i + 1], outflows[i]]) / 3
             last_guess = q_guess * 2
             counter = 1
-            while abs(last_guess - q_guess) > 0.003:
+            while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
                 counter += 1
                 last_guess = q_guess.copy()
                 reach_q = sum([inflows[i], inflows[i + 1], outflows[i], q_guess]) / 4
@@ -110,6 +111,80 @@ class BaseReach:
             print(f'Minimum travel time is {min_travel_time} hours')
             dt_error = True
         return np.array(outflows), [peak_loc_error, peak_val_error, dt_error]
+    
+    def route_diagnostics(self, inflows, dt, max_iter=1000, verbose=False):
+        peak_loc_error = False
+        peak_val_error = False
+        dt_error = False
+        if np.argmax(inflows) < 20:
+            print('dt too large')
+            print(f'hydrograph peak of {max(inflows)} is at index {np.argmax(inflows)}')
+            peak_loc_error = True
+        outflows = list()
+        outflows.append((inflows[0]))
+        c0_series = list()
+        c0_series.append(0)
+        c1_series = list()
+        c1_series.append(0)
+        c2_series = list()
+        c2_series.append(0)
+        c_series = [0]
+        d_series = [0]
+        max_c = 0
+        min_c = 99999
+        x_ref = self.calculate_x_ref(inflows, dt)
+        if self.reach_length > x_ref and verbose:
+            print(f'WARNING: reach length {self.reach_length} greater than x_ref of {round(x_ref, 1)}')
+        if max(inflows) > max(self.geometry['discharge']):
+            print(f'WARNING: inflow {round(max(inflows), 1)} greater than max flowrate of {round(max(self.geometry["discharge"]), 1)}')
+            peak_val_error = True
+        for i in range(len(inflows) - 1):
+            q_guess = sum([inflows[i], inflows[i + 1], outflows[i]]) / 3
+            last_guess = np.inf
+            counter = 1
+            while abs(last_guess - q_guess) > 0.003:
+                counter += 1
+                last_guess = q_guess.copy()
+                reach_q = sum([inflows[i], inflows[i + 1], outflows[i], q_guess]) / 4
+
+                # Interpolate
+                log_reach_q = np.log(reach_q)
+                b_tmp = np.exp(np.interp(log_reach_q, self.geometry['log_q'], self.geometry['log_width']))
+                c_tmp = np.interp(log_reach_q, self.geometry['log_q'], self.geometry['celerity'])
+
+                # From Riverware pg 620 https://www.riverware.org/PDF/RiverWare/documentation/Objects.pdf
+                courant = c_tmp * dt * 60 * 60 / self.reach_length
+                reynold = reach_q / (self.slope * c_tmp * self.reach_length * b_tmp)
+                # courant = min(1, courant)
+                
+                max_c = max(max_c, c_tmp)
+                min_c = min(min_c, c_tmp)
+
+                c0 = (-1 + courant + reynold) / (1 + courant + reynold)
+                c1 = (1 + courant - reynold) / (1 + courant + reynold)
+                c2 = (1 - courant + reynold) / (1 + courant + reynold)
+                
+                q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
+                q_guess = max(min(inflows), q_guess)
+                if counter == max_iter:
+                    last_guess = q_guess
+            
+            c0_series.append((c0 * inflows[i + 1]))
+            c1_series.append((c1 * inflows[i]))
+            c2_series.append((c2 * outflows[i]))
+            c_series.append(courant)
+            d_series.append(reynold)
+            outflows.append(q_guess)
+        min_travel_time = (self.reach_length / max_c) / (60 * 60)
+        if min_travel_time < dt:
+            print('dt too large')
+            print(f'Minimum travel time is {min_travel_time} hours')
+            dt_error = True
+        # plotables = [c1_series, np.array(c0_series) + np.array(c2_series)]
+        # plotables = [ratio_series]
+        plotables = [c_series]
+        # plotables = []
+        return np.array(outflows), [peak_loc_error, peak_val_error, dt_error, plotables]
     
 class TrapezoidalReach(BaseReach):
 
@@ -244,26 +319,30 @@ class CustomReach(BaseReach):
         geom['log_width'] = np.log(geom['top_width'])
         geom['area'] = areas
         geom['wetted_perimeter'] = perimeters
+        geom['wetted_perimeter'][geom['wetted_perimeter'] <= 0] = geom['wetted_perimeter'][geom['wetted_perimeter'] > 0].min()
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
         geom['mannings_n'] = np.repeat(self.mannings_n, len(stages))
         geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
+        geom['discharge'][geom['discharge'] <= 0] = geom['discharge'][geom['discharge'] > 0].min()
+        self.clean_looped_rating_curve()
         geom['log_q'] = np.log(geom['discharge'])
         dq = geom['discharge'][1:] - geom['discharge'][:-1]
         da = geom['area'][1:] - geom['area'][:-1]
         dq_da = dq / da
-        dq_da[0] = 0
-        # Smooth
-        # kernel = 50
-        # dq_da[np.isnan(dq_da)] = 0.0001
-        # dq_da_cum = np.cumsum(dq_da)
-        # dq_da_cum = dq_da_cum[kernel:] - dq_da_cum[:-kernel]
-        # dq_da_cum /= kernel
-        # dq_da[int(kernel / 2):-int(kernel / 2)] = dq_da_cum
-        # dq_da[:int(kernel / 2)] = np.linspace(dq_da[0], dq_da[int(kernel / 2)], int(kernel / 2))
-        # dq_da[-int(kernel / 2):] = dq_da[-int(kernel / 2):].mean()
-        # dq_da[dq_da < 0.0001] = 0.0001
-
+        dq_da[0] = dq_da[1]
+        dq_da[np.isnan(dq_da)] = 0.0001
+        dq_da = gaussian_filter1d(dq_da, 15)
+        dq_da[dq_da < 0.0001] = 0.0001
         geom['celerity'] = np.append(dq_da, dq_da[-1])
+        
+
+    def clean_looped_rating_curve(self):
+        # Enforce monotonic discharge inreases
+        for ind, q in enumerate(self.geometry['discharge']):
+            if q < q_last:
+                self.geometry['discharge'][ind] = q_last
+            else:
+                q_last = q
 
 
 class MuskingumReach:
