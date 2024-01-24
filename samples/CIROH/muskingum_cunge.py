@@ -132,29 +132,6 @@ def execute(meta_path, debug_plots=False):
         # Create reach
         mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['el'], tmp_geom['area'], tmp_geom['vol'], tmp_geom['p'])
 
-        # # Enforce monotonic discharge inreases
-        # q_last = 0
-        # for ind, q in enumerate(mc_reach.geometry['discharge']):
-        #     if q < q_last:
-        #         mc_reach.geometry['discharge'][ind] = q_last
-        #     else:
-        #         q_last = q
-
-        # # Calculate celerity
-        # dqs = mc_reach.geometry['discharge'][1:] - mc_reach.geometry['discharge'][:-1]
-        # das = mc_reach.geometry['area'][1:] - mc_reach.geometry['area'][:-1]
-        # dq_da = dqs / das
-        # dq_da[0] = dq_da[1]
-        # dq_da = np.append(dq_da, dq_da[-1])
-
-        # dq_da[np.isnan(dq_da)] = 0.0001
-        # dq_da_2 = gaussian_filter1d(dq_da, 15)
-        # dq_da_2[dq_da_2 < 0.0001] = 0.0001
-        # dq_da_2[abs((dq_da - dq_da[0]) / dq_da[0]) < 0.1] = dq_da[0]
-        # mc_reach.geometry['celerity'] = dq_da_2
-
-
-
         # Route hydrographs
         results_dict['ReachCode'].append(reach)
         results_dict['DASqKm'].append(da)
@@ -236,20 +213,7 @@ def execute(meta_path, debug_plots=False):
                     break
                 iter += 1
                 # adjust reach length for model stability
-                # if mc_reach.geometry['discharge'].max() > max_q:
-                #     max_c = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
-                # else:
-                #     max_c = 1
-                # tmp_celerity = max_c
                 tmp_celerity = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
-                # tmp_celerity = mc_reach.geometry['celerity'][:np.argmax((mc_reach.geometry['log_q'] > np.log(outflows.max())))].max()  # largest celerity the reach can achieve under the peak inflow
-                # tmp_celerity = np.interp(np.log(outflows.max()), mc_reach.geometry['log_q'], mc_reach.geometry['celerity'])  # this is a better way to do it, even if it causes some warnings
-                # tmp_celerity = np.interp(np.log(outflows[:np.argmax(outflows)]), mc_reach.geometry['log_q'], mc_reach.geometry['celerity']).mean()
-
-                # rising_limb_start = np.argmax(outflows > (0.05 * outflows.max()))
-                # rising_limb_stop = np.argmax(outflows)
-                # tmp_celerity = np.interp(np.log(outflows[rising_limb_start:rising_limb_stop]), mc_reach.geometry['log_q'], mc_reach.geometry['celerity']).mean()
-
                 length = (dt * 60 * 60) * (tmp_celerity)
                 mc_reach.reach_length = length
                 tmp_length += length
@@ -257,15 +221,6 @@ def execute(meta_path, debug_plots=False):
                 # Route hydrograph
                 outflows, errors = mc_reach.route_hydrograph_c(outflows, dt)
                 peak_loc = np.argmax(outflows)
-
-                # Potential fix for instability
-                # for i in range(peak_loc):
-                #     if outflows[i + 1] < outflows[i]:
-                #         outflows[i + 1] = (outflows[i] + outflows[i + 2]) / 2
-                # for i in range(len(outflows) - (peak_loc + 1)):
-                #     i += peak_loc
-                #     if outflows[i + 1] > outflows[i]:
-                #         outflows[i] = (outflows[i - 1] + outflows[i + 1]) / 2
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
