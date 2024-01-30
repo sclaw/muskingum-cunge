@@ -94,7 +94,7 @@ def execute(meta_path, debug_plots=False):
     counter = 1
     t_start = time.perf_counter()
     reaches = reach_data.index.to_list()
-    reaches = ['4300101000875']
+    # reaches = ['4300101000194']
     for reach in reaches:
         print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
@@ -190,7 +190,7 @@ def execute(meta_path, debug_plots=False):
             # Calculate hydrograph ordinates
             magnitude = hydrograph.split('_')[0]
             peak = PEAK_FLOW_REGRESSION[magnitude](da)
-            if peak > mc_reach.geometry['discharge']:
+            if peak > mc_reach.geometry['discharge'].max():
                 results_dict['_'.join([hydrograph, 'reach_length'])].append(0)
                 results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(0)
                 results_dict['_'.join([hydrograph, 'diffusion_number'])].append(0)
@@ -202,25 +202,36 @@ def execute(meta_path, debug_plots=False):
             inflows = np.interp(timesteps, tmp_times, tmp_flows)
 
             # Prepare model run
+            # Ponce method
+            qref = 0.5 * peak
+            cref = np.interp(qref, mc_reach.geometry['discharge'], mc_reach.geometry['celerity'])
+            twref = np.interp(qref, mc_reach.geometry['discharge'], mc_reach.geometry['top_width'])
+            dist_to_rise = (tmp_times[10] * 60 * 60) * cref
+            dxc = dt * 60 * 60 * cref  # Courant length
+            dxd = (qref / twref) / (mc_reach.slope * cref)  # characteristic reach length
+            dxmax = 0.5 * (dxc + dxd)
+            cmax = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > peak)].max()
+            dxmin = cmax * (dt * 60 * 60)
+            dx = max([dxmin, dxmax])
+            subreaches = int(np.ceil(dist_to_rise / dx))
+            dx = dist_to_rise / subreaches
+            mc_reach.reach_length = dx
+
             outflows = inflows.copy()
-            t_rise = np.argmax(outflows)
-            peak_loc = t_rise.copy()
+            # t_rise = np.argmax(outflows)
+            # peak_loc = t_rise.copy()
             tmp_length = 0
 
-            iter = 1
-            while peak_loc < 2 * t_rise:
-                if iter > 100:
-                    break
-                iter += 1
+            for iter in range(subreaches):
                 # adjust reach length for model stability
-                tmp_celerity = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
-                length = (dt * 60 * 60) * (tmp_celerity)
-                mc_reach.reach_length = length
-                tmp_length += length
+                # tmp_celerity = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
+                # length = (dt * 60 * 60) * (tmp_celerity)
+                # mc_reach.reach_length = length
+                # tmp_length += length
 
                 # Route hydrograph
                 outflows, errors = mc_reach.route_hydrograph_c(outflows, dt)
-                peak_loc = np.argmax(outflows)
+                # peak_loc = np.argmax(outflows)
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
