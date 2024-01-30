@@ -58,9 +58,6 @@ Hopefully more reatures to come!!
 	
     $ python3 -m pip install muskingumcunge
 
-or conda:
-
-    $ conda install -c conda-forge muskingumcunge
 
 ## Issue tracker
 
