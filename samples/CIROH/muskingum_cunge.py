@@ -210,7 +210,7 @@ def execute(meta_path, debug_plots=False):
             # Route hydrograph
             outflows = inflows.copy()
             for iter in range(subreaches):
-                outflows, errors = mc_reach.route_hydrograph_c(outflows, dt)
+                outflows = mc_reach.route_hydrograph_c(outflows, dt)
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
