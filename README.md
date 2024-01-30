@@ -1,4 +1,6 @@
-# Muskingum-Cunge Routing in Python
+# Muskingum-Cunge Routing in Python <img src="images/PYMC_logo.png" width=130 height = 150 align="right" />
+
+<img src="images/downstream_propogation.gif" alt="drawing" width="400"/>
 
 ## Overview
 `muskingumcunge` is a Python implementation of the Musking-Cunge model, a channel routing method that allows for the 
