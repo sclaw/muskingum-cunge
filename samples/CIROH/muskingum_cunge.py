@@ -82,19 +82,15 @@ def execute(meta_path, debug_plots=False):
     results_dict['ReachCode'] = list()
     results_dict['DASqKm'] = list()
     results_dict['slope'] = list()
-    results_dict['peak_loc_error'] = list()
-    results_dict['peak_val_error'] = list()
-    results_dict['dt_error'] = list()
     for h in hydrographs:
-        results_dict['_'.join([h, 'reach_length'])] = list()
-        results_dict['_'.join([h, 'pct_attenuation'])] = list()
         results_dict['_'.join([h, 'diffusion_number'])] = list()
+        results_dict['_'.join([h, 'pct_attenuation'])] = list()
+        results_dict['_'.join([h, 'skewness'])] = list()
 
     # Route
     counter = 1
     t_start = time.perf_counter()
     reaches = reach_data.index.to_list()
-    # reaches = ['4300101000194']
     for reach in reaches:
         print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
         counter += 1
@@ -120,13 +116,10 @@ def execute(meta_path, debug_plots=False):
             results_dict['ReachCode'].append(reach)
             results_dict['DASqKm'].append(da)
             results_dict['slope'].append(slope)
-            results_dict['peak_loc_error'].append(False)
-            results_dict['peak_val_error'].append(False)
-            results_dict['dt_error'].append(False)
             for hydrograph in hydrographs:
-                results_dict['_'.join([hydrograph, 'reach_length'])].append(0)
-                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(0)
-                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(0)
+                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'skewness'])].append(np.nan)
             continue
 
         # Create reach
@@ -136,9 +129,6 @@ def execute(meta_path, debug_plots=False):
         results_dict['ReachCode'].append(reach)
         results_dict['DASqKm'].append(da)
         results_dict['slope'].append(slope)
-        results_dict['peak_loc_error'].append(False)
-        results_dict['peak_val_error'].append(False)
-        results_dict['dt_error'].append(False)
         if debug_plots:
             
             for row, reg in zip(axs, PEAK_FLOW_REGRESSION):
@@ -191,9 +181,9 @@ def execute(meta_path, debug_plots=False):
             magnitude = hydrograph.split('_')[0]
             peak = PEAK_FLOW_REGRESSION[magnitude](da)
             if peak > mc_reach.geometry['discharge'].max():
-                results_dict['_'.join([hydrograph, 'reach_length'])].append(0)
-                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(0)
-                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(0)
+                results_dict['_'.join([hydrograph, 'diffusion_number'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'skewness'])].append(np.nan)
                 continue
             tmp_flows = Q_QP_ORDINATES * peak
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
@@ -217,33 +207,25 @@ def execute(meta_path, debug_plots=False):
             dx = dist_to_rise / subreaches
             mc_reach.reach_length = dx
 
+            # Route hydrograph
             outflows = inflows.copy()
-            # t_rise = np.argmax(outflows)
-            # peak_loc = t_rise.copy()
-            tmp_length = 0
-
             for iter in range(subreaches):
-                # adjust reach length for model stability
-                # tmp_celerity = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
-                # length = (dt * 60 * 60) * (tmp_celerity)
-                # mc_reach.reach_length = length
-                # tmp_length += length
-
-                # Route hydrograph
                 outflows, errors = mc_reach.route_hydrograph_c(outflows, dt)
-                # peak_loc = np.argmax(outflows)
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
             pct_attenuation = raw_attenuation / inflows.max()
             tmp_diff_number = ((9 * np.pi) / 50) * (((0.035 ** (6 / 5)) * (max(inflows) ** (1 / 5))) / ((slope ** (8 / 5)) * (dt * 20)))
+            peak_loc = np.argmax(outflows)
+            dqs = outflows[1:] - outflows[:-1]
+            rising_dqs = np.abs(dqs[:peak_loc])
+            falling_dqs = np.abs(dqs[peak_loc:])
+            skewness = 1 - (falling_dqs.mean() / rising_dqs.mean())
 
-            results_dict['_'.join([hydrograph, 'reach_length'])].append(tmp_length)
-            results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
             results_dict['_'.join([hydrograph, 'diffusion_number'])].append(tmp_diff_number)
-            results_dict['peak_loc_error'][-1] = results_dict['peak_loc_error'][-1] or errors[0]
-            results_dict['peak_val_error'][-1] = results_dict['peak_val_error'][-1] or errors[1]
-            results_dict['dt_error'][-1] = results_dict['dt_error'][-1] or errors[2]
+            results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
+            results_dict['_'.join([hydrograph, 'skewness'])].append(skewness)
+            
 
             # Debug
             if debug_plots:
