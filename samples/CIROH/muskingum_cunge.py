@@ -85,7 +85,11 @@ def execute(meta_path, debug_plots=False):
     for h in hydrographs:
         results_dict['_'.join([h, 'diffusion_number'])] = list()
         results_dict['_'.join([h, 'pct_attenuation'])] = list()
+        results_dict['_'.join([h, 'pct_attenuation_per_km'])] = list()
         results_dict['_'.join([h, 'skewness'])] = list()
+        results_dict['_'.join([h, 'mass_conserve'])] = list()
+        results_dict['_'.join([h, 'dx'])] = list()
+        results_dict['_'.join([h, 'subreaches'])] = list()
 
     # Route
     counter = 1
@@ -119,7 +123,12 @@ def execute(meta_path, debug_plots=False):
             for hydrograph in hydrographs:
                 results_dict['_'.join([hydrograph, 'diffusion_number'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'pct_attenuation_per_km'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'skewness'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'mass_conserve'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'dx'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'subreaches'])].append(np.nan)
+            plt.close()
             continue
 
         # Create reach
@@ -183,7 +192,11 @@ def execute(meta_path, debug_plots=False):
             if peak > mc_reach.geometry['discharge'].max():
                 results_dict['_'.join([hydrograph, 'diffusion_number'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'pct_attenuation_per_km'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'skewness'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'mass_conserve'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'dx'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'subreaches'])].append(np.nan)
                 continue
             tmp_flows = Q_QP_ORDINATES * peak
             tmp_times = T_TP_ORDINATES * DURATION_REGRESSION[hydrograph](da)
@@ -200,7 +213,7 @@ def execute(meta_path, debug_plots=False):
             dxc = dt * 60 * 60 * cref  # Courant length
             dxd = (qref / twref) / (mc_reach.slope * cref)  # characteristic reach length
             dxmax = 0.5 * (dxc + dxd)
-            cmax = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > peak)].max()
+            cmax = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > peak)].max()  # I think the fact that this is the max should cover us for making all stable
             dxmin = cmax * (dt * 60 * 60)
             dx = max([dxmin, dxmax])
             subreaches = int(np.ceil(dist_to_rise / dx))
@@ -215,16 +228,23 @@ def execute(meta_path, debug_plots=False):
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
             pct_attenuation = raw_attenuation / inflows.max()
-            tmp_diff_number = ((9 * np.pi) / 50) * (((0.035 ** (6 / 5)) * (max(inflows) ** (1 / 5))) / ((slope ** (8 / 5)) * (dt * 20)))
+            pct_attenuation_km = (1 - ((1 - pct_attenuation) ** (1000 / (dx * subreaches))))
+            tmp_diff_number = ((9 * np.pi) / 50) * (((0.035 ** (6 / 5)) * (max(inflows) ** (1 / 5))) / (((slope * 100) ** (8 / 5)) * (dt * 20)))
             peak_loc = np.argmax(outflows)
             dqs = outflows[1:] - outflows[:-1]
             rising_dqs = np.abs(dqs[:peak_loc])
             falling_dqs = np.abs(dqs[peak_loc:])
             skewness = 1 - (falling_dqs.mean() / rising_dqs.mean())
+            # volume conservation a la todini 2007
+            conserved = inflows.sum() / outflows.sum()
 
             results_dict['_'.join([hydrograph, 'diffusion_number'])].append(tmp_diff_number)
             results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
+            results_dict['_'.join([hydrograph, 'pct_attenuation_per_km'])].append(pct_attenuation_km)
             results_dict['_'.join([hydrograph, 'skewness'])].append(skewness)
+            results_dict['_'.join([hydrograph, 'mass_conserve'])].append(conserved)
+            results_dict['_'.join([hydrograph, 'dx'])].append(dx)
+            results_dict['_'.join([hydrograph, 'subreaches'])].append(subreaches)
             
 
             # Debug
@@ -242,7 +262,6 @@ def execute(meta_path, debug_plots=False):
             loc_list = list()
             attenuations = list()
             att_colors = list()
-            lengths = list()
             for hydrograph in hydrographs:
                 loc = position_dict[hydrograph.split('_')[0]] + (offset_dict[hydrograph.split('_')[1]] * width)
                 loc_list.append(loc)
@@ -252,12 +271,10 @@ def execute(meta_path, debug_plots=False):
                     att_colors.append('k')
                 else:
                     att_colors.append('darkorange')
-                lengths.append(results_dict['_'.join([hydrograph, 'reach_length'])][-1])
                 
             att_ax.barh(loc_list, attenuations, width, label=hydrographs, color=att_colors)
             att_ax.set_yticks(loc_list)
             att_ax.set_yticklabels(hydrographs)
-            length_ax.barh(loc_list, lengths, width, label=hydrographs)
             length_ax.set_yticks(loc_list)
             length_ax.set_yticklabels(hydrographs)
 
@@ -272,5 +289,5 @@ def execute(meta_path, debug_plots=False):
     out_data.to_csv(run_dict['muskingum_path'])
 
 if __name__ == '__main__':
-    run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/4/run_metadata.json"
+    run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/6/run_metadata.json"
     execute(run_path, debug_plots=True)
