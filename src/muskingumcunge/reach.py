@@ -31,6 +31,7 @@ class BaseReach:
         geom['top_width'] = np.repeat(self.width, self.resolution)
         geom['log_width'] = np.log(geom['top_width'])
         geom['area'] = geom['stage'] * geom['top_width']
+        geom['log_area'] = np.log(geom['area'])
         geom['wetted_perimeter'] = self.width + (2 * geom['stage'])
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
         geom['mannings_n'] = np.repeat(self.mannings_n, self.resolution)
@@ -64,7 +65,8 @@ class BaseReach:
             q_guess = sum([inflows[i], inflows[i + 1], outflows[i]]) / 3
             last_guess = q_guess * 2
             counter = 1
-            while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
+            # while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
+            while counter < 2:
                 counter += 1
                 last_guess = q_guess.copy()
                 reach_q = sum([inflows[i], inflows[i + 1], outflows[i], q_guess]) / 4
@@ -81,11 +83,67 @@ class BaseReach:
                 c1 = (1 + courant - reynold) / (1 + courant + reynold)
                 c2 = (1 - courant + reynold) / (1 + courant + reynold)
 
+                k = self.reach_length / c_tmp
+                x = 0.5 * (1 - reynold)
+
                 q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
                 q_guess = max(min(inflows), q_guess)
                 if counter == max_iter:
                     last_guess = q_guess
             outflows.append(q_guess)
+
+        return np.array(outflows)
+    
+    def route_hydrograph_mct(self, inflows, dt, max_iter=1000):
+        outflows = list()
+        outflows.append(inflows[0])
+        assert max(inflows) < max(self.geometry['discharge']), 'Rating Curve does not cover range of flowrates in hydrograph'
+
+        # warm up parameters
+        qref1 = (inflows[0] + outflows[0]) / 2
+        aref1 = np.exp(np.interp(np.log(qref1), self.geometry['log_q'], self.geometry['log_area']))
+        bref1 = np.exp(np.interp(np.log(qref1), self.geometry['log_q'], self.geometry['log_width']))
+        cref1 = np.interp(np.log(qref1), self.geometry['log_q'], self.geometry['celerity'])
+        betaref1 = (cref1 * aref1) / qref1
+        courantref1 = (cref1 / betaref1) * (dt * 60 * 60 / self.reach_length)
+        reynoldref1 = qref1 / (betaref1 * bref1 * self.slope * cref1 * self.reach_length)
+        for i in range(len(inflows) - 1):
+            q_guess = outflows[i] + (inflows[i + 1] - inflows[i])
+            last_guess = q_guess * 2
+            counter = 1
+            while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
+                counter += 1
+                last_guess = q_guess.copy()
+                
+                qref2 = (inflows[i + 1] + q_guess) / 2
+                # interpolate
+                aref2 = np.exp(np.interp(np.log(qref2), self.geometry['log_q'], self.geometry['log_area']))
+                bref2 = np.exp(np.interp(np.log(qref2), self.geometry['log_q'], self.geometry['log_width']))
+                cref2 = np.interp(np.log(qref2), self.geometry['log_q'], self.geometry['celerity'])                
+                betaref2 = (cref2 * aref2) / qref2
+                courantref2 = (cref2 / betaref2) * (dt * 60 * 60 / self.reach_length)                
+                reynoldref2 = qref2 / (betaref2 * bref2 * self.slope * cref2 * self.reach_length)
+
+                # MCT parameters
+                c0 = (-1 + courantref1 + reynoldref1) / (1 + courantref2 + reynoldref2)
+                c1 = ((1 + courantref1 - reynoldref1) / (1 + courantref2 + reynoldref2)) * (courantref2 / courantref1)
+                c2 = ((1 - courantref1 + reynoldref1) / (1 + courantref2 + reynoldref2)) * (courantref2 / courantref1)
+
+                # Estimate outflow
+                q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
+                q_guess = max(min(inflows), q_guess)
+                if counter == max_iter:
+                    last_guess = q_guess
+            outflows.append(q_guess)
+            if (cref2 / betaref2) > 1:
+                print((cref2 / betaref2))
+            qref1 = qref2
+            aref1 = aref2
+            bref1 = bref2
+            cref1 = bref2
+            betaref1 = betaref2
+            courantref1 = courantref2
+            reynoldref1 = reynoldref2
 
         return np.array(outflows)
 
