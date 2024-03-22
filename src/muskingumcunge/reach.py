@@ -288,14 +288,17 @@ class CustomReach(BaseReach):
         geom['discharge'][geom['discharge'] <= 0] = geom['discharge'][geom['discharge'] > 0].min()
         self.clean_looped_rating_curve()
         geom['log_q'] = np.log(geom['discharge'])
-        dq = geom['discharge'][1:] - geom['discharge'][:-1]
-        da = geom['area'][1:] - geom['area'][:-1]
-        dq_da = dq / da
-        dq_da[0] = dq_da[1]
-        dq_da[np.isnan(dq_da)] = 0.0001
-        dq_da = gaussian_filter1d(dq_da, 15)
-        dq_da[dq_da < 0.0001] = 0.0001
-        geom['celerity'] = np.append(dq_da, dq_da[-1])
+
+        dp = geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]
+        dy = geom['stage'][1:] - geom['stage'][:-1]
+        dp_dy = dp / dy
+        dp_dy[0] = dp_dy[1]
+        dp_dy[np.isnan(dp_dy)] = 0.0001
+        dp_dy = gaussian_filter1d(dp_dy, 15)
+        dp_dy[dp_dy < 0.0001] = 0.0001
+        dp_dy = np.append(dp_dy, dp_dy[-1])
+        k_prime = (5 / 3) - ((2 / 3)*(geom['area'] / (geom['top_width'] * geom['wetted_perimeter'])) * dp_dy)
+        geom['celerity'] = k_prime * (geom['discharge'] / geom['area'])
         
 
     def clean_looped_rating_curve(self):
@@ -326,3 +329,61 @@ class MuskingumReach:
             q_out = max(min(inflows), q_out)
             outflows.append(q_out)
         return outflows
+
+
+class WRFCompound(BaseReach):
+    """ Equations from lines 276 & 390 of WRF-HYDRO gh page 
+    https://github.com/NCAR/wrf_hydro_nwm_public/blob/v5.2.0-rc2/trunk/NDHMS/Routing/module_channel_routing.F
+    """
+    
+    def __init__(self, bottom_width, side_slope, bankfull_depth, floodplain_width, channel_n, floodplain_n, slope, reach_length, max_stage=10, stage_resolution=50):
+        self.bottom_width = bottom_width
+        self.side_slope = side_slope
+        self.bankfull_depth = bankfull_depth
+        assert floodplain_width >= self.bottom_width + (self.side_slope * self.bankfull_depth), 'floodplain width smaller than channel width at bankfull depth'
+        self.floodplain_width = floodplain_width
+        self.channel_n = channel_n
+        self.floodplain_n = floodplain_n
+        self.slope = slope
+        self.reach_length = reach_length
+        self.max_stage = max_stage
+        self.resolution = stage_resolution
+
+        self.generate_geometry()
+    
+    def generate_geometry(self):
+        geom = self.geometry
+
+        geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
+        geom['top_width'] = self.bottom_width + (2 * geom['stage'] * self.side_slope)
+        geom['area'] = ((geom['top_width'] + self.bottom_width) / 2) * geom['stage']
+        geom['wetted_perimeter'] = (((((geom['stage'] * self.side_slope) ** 2) + (geom['stage'] ** 2)) ** 0.5) * 2) + self.bottom_width
+        geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
+        geom['hydraulic_radius'][0] = geom['hydraulic_radius'][1]
+        geom['discharge'] = (1 / self.channel_n) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
+        geom['dpdy'] = np.repeat(np.sqrt((self.side_slope ** 2) + 1) * 2, geom['wetted_perimeter'].shape[0])
+
+        # Add compound channel
+        bankfull_indices = (geom['stage'] > self.bankfull_depth)
+        tw_at_bkf = self.bottom_width + (2 * self.bankfull_depth * self.side_slope)
+        a_at_bkf = ((self.bottom_width + tw_at_bkf) / 2) * self.bankfull_depth
+        p_at_bkf = (((((self.bankfull_depth * self.side_slope) ** 2) + (self.bankfull_depth ** 2)) ** 0.5) * 2) + self.bottom_width
+        area = a_at_bkf + (self.floodplain_width * (geom['stage'] - self.bankfull_depth))
+        perimeter = p_at_bkf + (self.floodplain_width - tw_at_bkf) + (geom['stage'] - self.bankfull_depth)
+        radius = area / perimeter
+        radius[~bankfull_indices] = 1
+        n_adj = ((self.channel_n * p_at_bkf) + ((perimeter - p_at_bkf) * self.floodplain_n)) / perimeter
+        discharge = (1 / n_adj) * area * (radius ** (2 / 3)) * (self.slope ** 0.5)
+
+        geom['wetted_perimeter'][bankfull_indices] = perimeter[bankfull_indices]
+        geom['area'][bankfull_indices] = area[bankfull_indices]
+        geom['top_width'][bankfull_indices] = self.floodplain_width
+        geom['discharge'][bankfull_indices] = discharge[bankfull_indices]
+        geom['dpdy'][bankfull_indices] = 2
+
+        k_prime = (5 / 3) - ((2 / 3) * (geom['area'] / (geom['top_width'] * geom['wetted_perimeter'])) * geom['dpdy'])
+        geom['celerity'] = k_prime * (geom['discharge'] / geom['area'])
+        geom['celerity'][0] = geom['celerity'][1]
+        geom['log_q'] = np.log(geom['discharge'])
+
+        geom['log_width'] = np.log(geom['top_width'])
