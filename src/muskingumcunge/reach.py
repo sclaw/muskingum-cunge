@@ -146,8 +146,7 @@ class BaseReach:
             reynoldref1 = reynoldref2
 
         return np.array(outflows)
-
-    
+   
 class TrapezoidalReach(BaseReach):
 
     def __init__(self, bottom_width, side_slope, mannings_n, slope, reach_length, max_stage=10, stage_resolution=50):
@@ -299,6 +298,9 @@ class CustomReach(BaseReach):
         dp_dy = np.append(dp_dy, dp_dy[-1])
         k_prime = (5 / 3) - ((2 / 3)*(geom['area'] / (geom['top_width'] * geom['wetted_perimeter'])) * dp_dy)
         geom['celerity'] = k_prime * (geom['discharge'] / geom['area'])
+        geom['celerity'][0] = geom['celerity'][1]
+        geom['celerity'] = np.nan_to_num(geom['celerity'])
+        ## TODO:  geom['celerity'][<0] = 0
         
 
     def clean_looped_rating_curve(self):
@@ -309,7 +311,6 @@ class CustomReach(BaseReach):
                 self.geometry['discharge'][ind] = q_last
             else:
                 q_last = q
-
 
 class MuskingumReach:
     
@@ -329,7 +330,6 @@ class MuskingumReach:
             q_out = max(min(inflows), q_out)
             outflows.append(q_out)
         return outflows
-
 
 class WRFCompound(BaseReach):
     """ Equations from lines 276 & 390 of WRF-HYDRO gh page 
@@ -387,3 +387,72 @@ class WRFCompound(BaseReach):
         geom['log_q'] = np.log(geom['discharge'])
 
         geom['log_width'] = np.log(geom['top_width'])
+
+
+class SigmoidalReach(BaseReach):
+    geometry = {'stage': None, 
+                'top_width': None,
+                'area': None,
+                'wetted_perimeter': None,
+                'hydraulic_radius': None,
+                'mannings_n': None}
+    rating_curve = {'stage': None,
+                    'discharge': None}
+    muskingum_params = {'stage': None,
+                        'k': None,
+                        'x': None}
+
+    def __init__(self, mannings_n, slope, reach_length, ch_w, fp_w, bkf_el, fp_s, max_stage=10, stage_resolution=50):
+        self.mannings_n = mannings_n
+        self.slope = slope
+        self.reach_length = reach_length
+        self.ch_w = ch_w
+        self.fp_w = fp_w
+        self.bkf_el = bkf_el
+        self.fp_s = fp_s
+        self.geometry = None
+        self.max_stage = max_stage
+        self.resolution = stage_resolution
+
+        self.generate_geometry()
+
+    def generate_geometry(self):
+        geom = self.geometry
+
+        geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
+        geom['mannings_n'] = np.repeat(self.mannings_n, len(geom['stage']))
+        
+        L = self.fp_w - self.ch_w
+        d_el = geom['stage'][1:] - geom['stage'][:-1]
+        d_el = np.append(d_el, d_el[-1])
+
+        geom['top_width'] = (L / (1 + np.exp(-self.fp_s * (geom['stage'] - self.bkf_el)))) + self.ch_w
+        geom['log_width'] = np.log(geom['top_width'])
+
+        geom['area'] = d_el * geom['top_width']
+        geom['area'] = np.cumsum(geom['area'])
+        d_w = geom['top_width'][1:] - geom['top_width'][:-1]
+        d_w = np.append(d_w, d_w[-1])
+        geom['wetted_perimeter'] = np.sqrt((d_el ** 2) + (d_w ** 2))
+        geom['wetted_perimeter'] = np.cumsum(geom['wetted_perimeter']) + self.ch_w
+        geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
+
+        rhp = (geom['hydraulic_radius'][1:] - geom['hydraulic_radius'][:-1]) / (geom['stage'][1:] - geom['stage'][:-1])
+        rhp = np.append(rhp, rhp[-1])
+
+        geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
+        geom['discharge'][geom['discharge'] <= 0] = geom['discharge'][geom['discharge'] > 0].min()
+        geom['log_q'] = np.log(geom['discharge'])
+
+        dp = geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]
+        dy = geom['stage'][1:] - geom['stage'][:-1]
+        dp_dy = dp / dy
+        dp_dy[0] = dp_dy[1]
+        dp_dy[np.isnan(dp_dy)] = 0.0001
+        dp_dy[dp_dy < 0.0001] = 0.0001
+        dp_dy = np.append(dp_dy, dp_dy[-1])
+        k_prime = (5 / 3) - ((2 / 3)*(geom['area'] / (geom['top_width'] * geom['wetted_perimeter'])) * dp_dy)
+        geom['celerity'] = k_prime * (geom['discharge'] / geom['area'])
+        geom['celerity'][0] = geom['celerity'][1]
+        geom['celerity'] = np.nan_to_num(geom['celerity'])
+        
