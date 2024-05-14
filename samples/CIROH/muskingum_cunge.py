@@ -86,6 +86,8 @@ def execute(meta_path, debug_plots=False):
         results_dict['_'.join([h, 'diffusion_number'])] = list()
         results_dict['_'.join([h, 'pct_attenuation'])] = list()
         results_dict['_'.join([h, 'pct_attenuation_per_km'])] = list()
+        results_dict['_'.join([h, 'cms_attenuation'])] = list()
+        results_dict['_'.join([h, 'cms_attenuation_per_km'])] = list()
         results_dict['_'.join([h, 'skewness'])] = list()
         results_dict['_'.join([h, 'mass_conserve'])] = list()
         results_dict['_'.join([h, 'dx'])] = list()
@@ -193,6 +195,8 @@ def execute(meta_path, debug_plots=False):
                 results_dict['_'.join([hydrograph, 'diffusion_number'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'pct_attenuation_per_km'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'cms_attenuation'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'cms_attenuation_per_km'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'skewness'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'mass_conserve'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'dx'])].append(np.nan)
@@ -223,10 +227,15 @@ def execute(meta_path, debug_plots=False):
             # Route hydrograph
             outflows = inflows.copy()
             for iter in range(subreaches):
-                outflows = mc_reach.route_hydrograph_c(outflows, dt)
+                try:
+                    outflows = mc_reach.route_hydrograph_c(outflows, dt)
+                except AssertionError:
+                    outflows = np.repeat(np.nan, outflows.shape[0])
+                    break
             
             # Log results
             raw_attenuation = inflows.max() - outflows.max()
+            attenuation_per_km = raw_attenuation / (dx * subreaches / 1000)
             pct_attenuation = raw_attenuation / inflows.max()
             pct_attenuation_km = (1 - ((1 - pct_attenuation) ** (1000 / (dx * subreaches))))
             tmp_diff_number = ((9 * np.pi) / 50) * (((0.035 ** (6 / 5)) * (max(inflows) ** (1 / 5))) / (((slope * 100) ** (8 / 5)) * (dt * 20)))
@@ -241,6 +250,8 @@ def execute(meta_path, debug_plots=False):
             results_dict['_'.join([hydrograph, 'diffusion_number'])].append(tmp_diff_number)
             results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(pct_attenuation)
             results_dict['_'.join([hydrograph, 'pct_attenuation_per_km'])].append(pct_attenuation_km)
+            results_dict['_'.join([hydrograph, 'cms_attenuation'])].append(raw_attenuation)
+            results_dict['_'.join([hydrograph, 'cms_attenuation_per_km'])].append(attenuation_per_km)
             results_dict['_'.join([hydrograph, 'skewness'])].append(skewness)
             results_dict['_'.join([hydrograph, 'mass_conserve'])].append(conserved)
             results_dict['_'.join([hydrograph, 'dx'])].append(dx)
@@ -289,5 +300,5 @@ def execute(meta_path, debug_plots=False):
     out_data.to_csv(run_dict['muskingum_path'])
 
 if __name__ == '__main__':
-    run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/6/run_metadata.json"
-    execute(run_path, debug_plots=True)
+    run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/8/run_metadata.json"
+    execute(run_path, debug_plots=False)
