@@ -282,7 +282,10 @@ class CustomReach(BaseReach):
         geom['wetted_perimeter'] = perimeters
         geom['wetted_perimeter'][geom['wetted_perimeter'] <= 0] = geom['wetted_perimeter'][geom['wetted_perimeter'] > 0].min()
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
-        geom['mannings_n'] = np.repeat(self.mannings_n, len(stages))
+        if type(self.mannings_n) == np.ndarray:
+            geom['mannings_n'] = self.mannings_n
+        else:
+            geom['mannings_n'] = np.repeat(self.mannings_n, len(stages))
         geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
         geom['discharge'][geom['discharge'] <= 0] = geom['discharge'][geom['discharge'] > 0].min()
         self.clean_looped_rating_curve()
