@@ -73,13 +73,13 @@ def execute(meta_path, debug_plots=False):
         run_dict = json.loads(f.read())
     geometry = {i: pd.read_csv(os.path.join(run_dict['geometry_directory'], f'{i}.csv')) for i in run_dict['fields_of_interest']}
     reach_data = pd.read_csv(run_dict['reach_meta_path'])
-    reach_data['ReachCode'] = reach_data['ReachCode'].astype(np.int64).astype(str)
-    reach_data = reach_data.set_index('ReachCode')
+    reach_data[run_dict['id_field']] = reach_data[run_dict['id_field']].astype(np.int64).astype(str)
+    reach_data = reach_data.set_index(run_dict['id_field'])
 
     # Setup Hydrographs
     hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
     results_dict = dict()
-    results_dict['ReachCode'] = list()
+    results_dict[run_dict['id_field']] = list()
     results_dict['DASqKm'] = list()
     results_dict['slope'] = list()
     for h in hydrographs:
@@ -97,8 +97,8 @@ def execute(meta_path, debug_plots=False):
     counter = 1
     t_start = time.perf_counter()
     reaches = reach_data.index.to_list()
-    for reach in reaches:
-        print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left')
+    for reach in reaches[625:]:
+        print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left | {(len(reaches) - counter)} left | | {((time.perf_counter() - t_start) / counter)} rate')
         counter += 1
 
         if debug_plots:
@@ -119,13 +119,15 @@ def execute(meta_path, debug_plots=False):
         # Handle null geometries
         if np.all(tmp_geom['area'] < 1):
             print('NULL GEOMETRY')
-            results_dict['ReachCode'].append(reach)
+            results_dict[run_dict['id_field']].append(reach)
             results_dict['DASqKm'].append(da)
             results_dict['slope'].append(slope)
             for hydrograph in hydrographs:
                 results_dict['_'.join([hydrograph, 'diffusion_number'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'pct_attenuation'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'pct_attenuation_per_km'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'cms_attenuation'])].append(np.nan)
+                results_dict['_'.join([hydrograph, 'cms_attenuation_per_km'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'skewness'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'mass_conserve'])].append(np.nan)
                 results_dict['_'.join([hydrograph, 'dx'])].append(np.nan)
@@ -137,7 +139,7 @@ def execute(meta_path, debug_plots=False):
         mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['el'], tmp_geom['area'], tmp_geom['vol'], tmp_geom['p'])
 
         # Route hydrographs
-        results_dict['ReachCode'].append(reach)
+        results_dict[run_dict['id_field']].append(reach)
         results_dict['DASqKm'].append(da)
         results_dict['slope'].append(slope)
         if debug_plots:
@@ -156,8 +158,10 @@ def execute(meta_path, debug_plots=False):
                 row[2].plot(mc_reach.geometry['top_width'], mc_reach.geometry['discharge'], c='k')
 
                 if mc_reach.geometry['discharge'].max() > max_q:
-                    max_c = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
-                    max_w = mc_reach.geometry['top_width'][:np.argmax(mc_reach.geometry['discharge'] > max_q)].max()
+                    peak_loc = np.argmax(mc_reach.geometry['discharge'] > max_q)
+                    peak_loc = max([peak_loc, 1])
+                    max_c = mc_reach.geometry['celerity'][:peak_loc].max() 
+                    max_w = mc_reach.geometry['top_width'][:peak_loc].max()
                 else:
                     max_c = 1
                     max_w = 1
@@ -217,7 +221,9 @@ def execute(meta_path, debug_plots=False):
             dxc = dt * 60 * 60 * cref  # Courant length
             dxd = (qref / twref) / (mc_reach.slope * cref)  # characteristic reach length
             dxmax = 0.5 * (dxc + dxd)
-            cmax = mc_reach.geometry['celerity'][:np.argmax(mc_reach.geometry['discharge'] > peak)].max()  # I think the fact that this is the max should cover us for making all stable
+            peak_loc = np.argmax(mc_reach.geometry['discharge'] > peak)
+            peak_loc = max([peak_loc, 1])
+            cmax = mc_reach.geometry['celerity'][:peak_loc].max()  # I think the fact that this is the max should cover us for making all stable
             dxmin = cmax * (dt * 60 * 60)
             dx = max([dxmin, dxmax])
             subreaches = int(np.ceil(dist_to_rise / dx))
@@ -295,10 +301,10 @@ def execute(meta_path, debug_plots=False):
             plt.close()
 
     out_data = pd.DataFrame(results_dict)
-    out_data = out_data.set_index('ReachCode')
+    out_data = out_data.set_index(run_dict['id_field'])
     os.makedirs(os.path.dirname(run_dict['muskingum_path']), exist_ok=True)
-    out_data.to_csv(run_dict['muskingum_path'])
+    # out_data.to_csv(run_dict['muskingum_path'])
 
 if __name__ == '__main__':
     run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/8/run_metadata.json"
-    execute(run_path, debug_plots=False)
+    execute(run_path, debug_plots=True)

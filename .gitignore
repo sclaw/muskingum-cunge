@@ -5,3 +5,7 @@ src/muskingumcunge/route.c*
 src/muskingumcunge/route.html
 *__pycache__*
 build/
+samples/model_stability
+samples/WRF-HYDRO
+samples/CIROH
+.vscode/
