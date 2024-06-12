@@ -67,8 +67,16 @@ class Network:
                 children = self.chlid_dict[node]
                 us_hydro = [self.channel_outflows[c] for c in children]
                 us_hydro = np.sum(us_hydro, axis=0)
-            routed = reach.route_hydrograph(us_hydro, dt)
-            # routed = us_hydro
+            
+            dx, subreaches = reach.optimize_route_params(us_hydro, dt)
+            if subreaches > 1:
+                routed = us_hydro.copy()
+                reach.reach_length = dx
+                for i in range(subreaches):
+                    routed = reach.route_hydrograph(routed, dt)
+            else:
+                routed = reach.route_hydrograph(us_hydro, dt)
+
             outflow = routed + self.forcing_df[node]
             self.channel_outflows[node] = outflow
         
