@@ -56,17 +56,21 @@ class BaseReach:
 
         return croute(inflows, dt, reach_length, slope, geometry)
 
-    def route_hydrograph(self, inflows, dt, max_iter=1000):
+    def route_hydrograph(self, inflows, dt, lateral=None, max_iter=1000):
         outflows = list()
         outflows.append((inflows[0]))
         assert max(inflows) < max(self.geometry['discharge']), 'Rating Curve does not cover range of flowrates in hydrograph'
+
+        if lateral is None:
+            lateral = np.zeros_like(inflows)
+        lateral = (lateral[:-1] + lateral[1:]) / 2
+        lateral = np.append(lateral, 0)
         
         for i in range(len(inflows) - 1):
-            q_guess = sum([inflows[i], inflows[i + 1], outflows[i]]) / 3
+            q_guess = sum([inflows[i], inflows[i + 1], outflows[i], lateral[i]]) / 3
             last_guess = q_guess * 2
             counter = 1
-            # while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
-            while counter < 2:
+            while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
                 counter += 1
                 last_guess = q_guess.copy()
                 reach_q = sum([inflows[i], inflows[i + 1], outflows[i], q_guess]) / 4
@@ -82,11 +86,9 @@ class BaseReach:
                 c0 = (-1 + courant + reynold) / (1 + courant + reynold)
                 c1 = (1 + courant - reynold) / (1 + courant + reynold)
                 c2 = (1 - courant + reynold) / (1 + courant + reynold)
+                c3 = (2 * courant) / (1 + courant + reynold)
 
-                k = self.reach_length / c_tmp
-                x = 0.5 * (1 - reynold)
-
-                q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i])
+                q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i]) + (c3 * lateral[i])
                 q_guess = max(min(inflows), q_guess)
                 if counter == max_iter:
                     last_guess = q_guess
