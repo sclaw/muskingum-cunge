@@ -146,6 +146,23 @@ class BaseReach:
             reynoldref1 = reynoldref2
 
         return np.array(outflows)
+    
+    def optimize_route_params(self, inflows, dt):
+        # Ponce method
+        qref = (inflows.max() + inflows.min()) / 2
+        cref = np.interp(qref, self.geometry['discharge'], self.geometry['celerity'])
+        twref = np.interp(qref, self.geometry['discharge'], self.geometry['top_width'])
+        dxc = dt * 60 * 60 * cref  # Courant length
+        dxd = (qref / twref) / (self.slope * cref)  # characteristic reach length
+        dxmax = 0.5 * (dxc + dxd)
+        peak_loc = np.argmax(self.geometry['discharge'] > inflows.max())
+        peak_loc = max([peak_loc, 1])
+        cmax = self.geometry['celerity'][:peak_loc].max()  # I think the fact that this is the max should cover us for making all stable
+        dxmin = cmax * (dt * 60 * 60)
+        dx = max([dxmin, dxmax])
+        subreaches = int(np.ceil(self.reach_length / dx))
+        dx = self.reach_length / subreaches
+        return dx, subreaches
    
 class TrapezoidalReach(BaseReach):
 
