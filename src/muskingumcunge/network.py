@@ -55,7 +55,7 @@ class Network:
         for n in self.headwaters:
             self.channel_outflows[n] = headwater_forcings[n].to_numpy()
 
-    def run_event(self):
+    def run_event(self, optimize_dx=True, conserve_mass=False):
         # calculate total inflow
         volume_in = self.forcing_df.sum().sum() + np.sum([self.channel_outflows[c].sum() for c in self.headwaters])
         dt = (self.forcing_df.index[1] - self.forcing_df.index[0]).seconds / 3600
@@ -68,17 +68,24 @@ class Network:
                 us_hydro = [self.channel_outflows[c] for c in children]
                 us_hydro = np.sum(us_hydro, axis=0)
             
-            dx, subreaches = reach.optimize_route_params(us_hydro, dt)
-            if subreaches > 1:
-                routed = us_hydro.copy()
+            laterals = self.forcing_df[node].to_numpy()
+    
+            if optimize_dx:
+                dx, subreaches = reach.optimize_route_params(us_hydro, dt)
                 reach.reach_length = dx
-                for i in range(subreaches):
-                    routed = reach.route_hydrograph(routed, dt)
             else:
-                routed = reach.route_hydrograph(us_hydro, dt)
+                subreaches = 1
 
-            outflow = routed + self.forcing_df[node]
-            self.channel_outflows[node] = outflow
+            routed = us_hydro
+            for i in range(subreaches):
+                routed = reach.route_hydrograph(routed, dt, lateral=laterals)
+
+            # enforce mass conservation
+            if conserve_mass:
+                in_flow = us_hydro.sum() + laterals.sum()
+                out_flow = routed.sum()
+                routed = routed * (in_flow / out_flow)
+            self.channel_outflows[node] = routed
         
         # calculate total outflow
         us_root = self.chlid_dict[self.root]
