@@ -55,7 +55,7 @@ class Network:
         for n in self.headwaters:
             self.channel_outflows[n] = headwater_forcings[n].to_numpy()
 
-    def run_event(self, optimize_dx=True, conserve_mass=False):
+    def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle'):
         # calculate total inflow
         volume_in = self.forcing_df.sum().sum() + np.sum([self.channel_outflows[c].sum() for c in self.headwaters])
         dt = (self.forcing_df.index[1] - self.forcing_df.index[0]).seconds / 3600
@@ -69,6 +69,8 @@ class Network:
                 us_hydro = np.sum(us_hydro, axis=0)
             
             laterals = self.forcing_df[node].to_numpy()
+            if lat_addition == 'top':
+                us_hydro = us_hydro + laterals
     
             if optimize_dx:
                 dx, subreaches = reach.optimize_route_params(us_hydro, dt)
@@ -78,7 +80,17 @@ class Network:
 
             routed = us_hydro
             for i in range(subreaches):
-                routed = reach.route_hydrograph(routed, dt, lateral=laterals)
+                try:
+                    if lat_addition == 'middle':
+                        l = laterals
+                    else:
+                        l = None
+                    routed = reach.route_hydrograph(routed, dt, lateral=l)
+                except AssertionError as e:
+                    print(f"Error routing {node}: {e}")
+            
+            if lat_addition == 'bottom':
+                routed = routed + laterals
 
             # enforce mass conservation
             if conserve_mass:
