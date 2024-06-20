@@ -30,7 +30,7 @@ class Network:
                 q.extend(children)
             if len(q) == 0:
                 working = False
-        self.post_order = self.post_order[:-1]
+        self.post_order = self.post_order[:-1]  # remove root
 
         self.reach_dict = None
         self.forcing_df = None
@@ -48,18 +48,21 @@ class Network:
     def load_forcings(self, forcing_df):
         self.forcing_df = forcing_df
         self.forcing_df = self.forcing_df[self.forcing_df.columns.intersection(self.post_order)].copy()
-        for n in self.headwaters:
-            self.channel_outflows[n] = np.zeros(self.forcing_df.shape[0])
     
     def load_headwater_forcings(self, headwater_forcings):
         for n in self.headwaters:
             self.channel_outflows[n] = headwater_forcings[n].to_numpy()
+            if n in self.post_order:
+                self.post_order.remove(n)
 
     def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle'):
         # calculate total inflow
         volume_in = self.forcing_df.sum().sum() + np.sum([self.channel_outflows[c].sum() for c in self.headwaters])
         dt = (self.forcing_df.index[1] - self.forcing_df.index[0]).seconds / 3600
+        counter = 1
         for node in self.post_order:
+            if counter % 100 == 0:
+                print(f"{counter} / {len(self.post_order)}")
             reach = self.reach_dict[node]
             if node in self.headwaters:
                 us_hydro = self.channel_outflows[node]
