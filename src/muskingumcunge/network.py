@@ -10,11 +10,21 @@ class Network:
         self.chlid_dict = defaultdict(list)
         for u, v in edge_dict.items():
             self.chlid_dict[v].append(u)
-        self.headwaters = list(set(edge_dict.keys()).difference(set(edge_dict.values())))
+
         roots = set(edge_dict.values()).difference(set(edge_dict.keys()))
         if len(roots) > 1:
             raise ValueError(f'Multiple roots detected: {roots}')
         self.root = set(edge_dict.values()).difference(set(edge_dict.keys())).pop()
+        self.headwaters = list()
+        self.post_order = list()
+        self.calculate_post_order()
+        self.reach_dict = None
+        self.forcing_df = None
+        self.channel_outflows = {k: None for k in self.edge_dict.keys()}
+        self.out_df = None
+
+    def calculate_post_order(self):
+        self.headwaters = list()
         self.post_order = list()
         q = [self.root]
         working = True
@@ -32,28 +42,27 @@ class Network:
                 working = False
         self.post_order = self.post_order[:-1]  # remove root
 
-        self.reach_dict = None
-        self.forcing_df = None
-        self.channel_outflows = {k: None for k in self.edge_dict.keys()}
-        self.out_df = None
-
     def export_post_order(self, path):
         out_df = pd.DataFrame(self.post_order, columns=['comid'])
         out_df['order'] = range(1, len(out_df) + 1)
         out_df.to_csv(path, index=False)
 
     def load_reaches(self, reach_dict):
-        self.reach_dict = reach_dict
+        self.reach_dict = reach_dict  # Todo:  add informational note about whether all reaches in post order have been loaded
 
     def load_forcings(self, forcing_df):
         self.forcing_df = forcing_df
         self.forcing_df = self.forcing_df[self.forcing_df.columns.intersection(self.post_order)].copy()
     
     def load_headwater_forcings(self, headwater_forcings):
-        for n in self.headwaters:
+        headwater_forcings = headwater_forcings.fillna(0)
+        missing = list(set(self.headwaters).difference(set(headwater_forcings.columns)))
+        print(f"Missing headwater forcings for: {missing}")
+        for n in headwater_forcings.columns:
             self.channel_outflows[n] = headwater_forcings[n].to_numpy()
-            if n in self.post_order:
-                self.post_order.remove(n)
+            self.headwaters.append(n)
+        for n in missing:
+            self.channel_outflows[n] = np.zeros(len(self.forcing_df))
 
     def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle'):
         # calculate total inflow
@@ -65,7 +74,7 @@ class Network:
                 print(f"{counter} / {len(self.post_order)}")
             reach = self.reach_dict[node]
             if node in self.headwaters:
-                us_hydro = self.channel_outflows[node]
+                continue
             else:
                 children = self.chlid_dict[node]
                 us_hydro = [self.channel_outflows[c] for c in children]
