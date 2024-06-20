@@ -21,6 +21,7 @@ class Network:
         self.reach_dict = None
         self.forcing_df = None
         self.channel_outflows = {k: None for k in self.edge_dict.keys()}
+        self.channel_outflows_stage = {k: None for k in self.edge_dict.keys()}
         self.out_df = None
 
     def calculate_post_order(self):
@@ -116,6 +117,7 @@ class Network:
                 out_flow = routed.sum()
                 routed = routed * (in_flow / out_flow)
             self.channel_outflows[node] = routed
+            self.channel_outflows_stage[node] = np.interp(routed, reach.geometry['discharge'], reach.geometry['stage'])
         
         # calculate total outflow
         us_root = self.chlid_dict[self.root]
@@ -128,5 +130,8 @@ class Network:
         out_df = pd.DataFrame(self.channel_outflows)
         out_df['dt'] = self.forcing_df.index
         self.out_df = out_df.set_index('dt')
+        stage_df = pd.DataFrame(self.channel_outflows_stage)
+        stage_df['dt'] = self.forcing_df.index
+        self.stage_df = stage_df.set_index('dt')
 
 
