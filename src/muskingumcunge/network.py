@@ -64,6 +64,12 @@ class Network:
         for n in missing:
             self.channel_outflows[n] = np.zeros(len(self.forcing_df))
 
+    def load_lake_forcings(self, lake_forcings):
+        lake_forcings = lake_forcings.fillna(0)
+        for n in lake_forcings.columns:
+            self.channel_outflows[n] = lake_forcings[n].to_numpy()
+            self.headwaters.append(n)
+
     def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle'):
         # calculate total inflow
         volume_in = self.forcing_df.sum().sum() + np.sum([self.channel_outflows[c].sum() for c in self.headwaters])
