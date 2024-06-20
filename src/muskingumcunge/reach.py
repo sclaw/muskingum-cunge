@@ -91,6 +91,7 @@ class BaseReach:
                 q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i]) + (c3 * lateral[i])
                 q_guess = max(min(inflows), q_guess)
                 if counter == max_iter:
+                    print('hit max iter')
                     last_guess = q_guess
             outflows.append(q_guess)
 
@@ -241,6 +242,13 @@ class CompoundReach(BaseReach):
         da = geom['area'][1:] - geom['area'][:-1]
         dq_da = dq / da
         geom['celerity'] = np.append(dq_da, dq_da[-1])
+
+        # dpdy = (geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]) / (geom['stage'][1:] - geom['stage'][:-1])
+        # dpdy = np.append(dpdy, dpdy[-1])
+        # dpdy[dpdy < 0.0001] = 0.0001
+        # k_prime = (5 / 3) - ((2 / 3) * (geom['area'] / (geom['top_width'] * geom['wetted_perimeter'])) * dpdy)
+        # geom['celerity'] = k_prime * (geom['discharge'] / geom['area'])
+
         geom['celerity'][geom['celerity'] < 0.0001] = 0.0001
         geom['log_q'] = np.log(geom['discharge'])
 
@@ -340,7 +348,7 @@ class MuskingumReach:
         self.k = k
         self.x = x
 
-    def route_hydrograph(self, inflows, dt):
+    def route_hydrograph(self, inflows, dt, lateral=None):
         outflows = list()
         outflows.append((inflows[0]))
 
@@ -359,13 +367,13 @@ class WRFCompound(BaseReach):
     """
     
     def __init__(self, bottom_width, side_slope, bankfull_depth, floodplain_width, channel_n, floodplain_n, slope, reach_length, max_stage=10, stage_resolution=50):
-        self.bottom_width = bottom_width
-        self.side_slope = side_slope
-        self.bankfull_depth = bankfull_depth
-        assert floodplain_width >= self.bottom_width + (self.side_slope * self.bankfull_depth), 'floodplain width smaller than channel width at bankfull depth'
-        self.floodplain_width = floodplain_width
-        self.channel_n = channel_n
-        self.floodplain_n = floodplain_n
+        self.Bw = bottom_width
+        self.z = side_slope  # Should be rise/run per side
+        self.bfd = bankfull_depth
+        self.TwCC = floodplain_width
+        self.n = channel_n
+        self.nCC = floodplain_n
+        self.So = slope
         self.slope = slope
         self.reach_length = reach_length
         self.max_stage = max_stage
@@ -377,37 +385,38 @@ class WRFCompound(BaseReach):
         geom = self.geometry
 
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
-        geom['top_width'] = self.bottom_width + (2 * geom['stage'] * self.side_slope)
-        geom['area'] = ((geom['top_width'] + self.bottom_width) / 2) * geom['stage']
-        geom['wetted_perimeter'] = (((((geom['stage'] * self.side_slope) ** 2) + (geom['stage'] ** 2)) ** 0.5) * 2) + self.bottom_width
+
+        # Trapezoidal Channel
+        geom['area'] = (self.Bw + geom['stage'] * self.z) * geom['stage']
+        geom['wetted_perimeter'] = (self.Bw + 2.0 * geom['stage'] * np.sqrt(1.0 + self.z*self.z))
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
-        geom['hydraulic_radius'][0] = geom['hydraulic_radius'][1]
-        geom['discharge'] = (1 / self.channel_n) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
-        geom['dpdy'] = np.repeat(np.sqrt((self.side_slope ** 2) + 1) * 2, geom['wetted_perimeter'].shape[0])
+        read_celerity = lambda y, r, n: (np.sqrt(self.So)/n)*((5./3.)*r**(2./3.) - ((2./3.)*r**(5./3.)*(2.0*np.sqrt(1.0 + self.z*self.z)/(self.Bw+2.0*y*self.z))))
+        geom['celerity'] = read_celerity(geom['stage'], geom['hydraulic_radius'], self.n)
+        geom['mannings_n'] = np.repeat(self.n, self.resolution)
+        geom['top_width'] = self.Bw + (2 * self.z * geom['stage'])
 
-        # Add compound channel
-        bankfull_indices = (geom['stage'] > self.bankfull_depth)
-        tw_at_bkf = self.bottom_width + (2 * self.bankfull_depth * self.side_slope)
-        a_at_bkf = ((self.bottom_width + tw_at_bkf) / 2) * self.bankfull_depth
-        p_at_bkf = (((((self.bankfull_depth * self.side_slope) ** 2) + (self.bankfull_depth ** 2)) ** 0.5) * 2) + self.bottom_width
-        area = a_at_bkf + (self.floodplain_width * (geom['stage'] - self.bankfull_depth))
-        perimeter = p_at_bkf + (self.floodplain_width - tw_at_bkf) + (geom['stage'] - self.bankfull_depth)
-        radius = area / perimeter
-        radius[~bankfull_indices] = 1
-        n_adj = ((self.channel_n * p_at_bkf) + ((perimeter - p_at_bkf) * self.floodplain_n)) / perimeter
-        discharge = (1 / n_adj) * area * (radius ** (2 / 3)) * (self.slope ** 0.5)
+        # Compound Channel
+        mask = (geom['stage'] > self.bfd)
+        area_trap = (self.Bw + self.bfd * self.z) * self.bfd
+        wetted_trap = (self.Bw + 2.0 * self.bfd * np.sqrt(1.0 + self.z*self.z))
+        hr_trap = area_trap / wetted_trap
+        celerity_trap = read_celerity(self.bfd, hr_trap, self.n)
+        area_CC = (geom['stage'] - self.bfd) * self.TwCC
+        wetted_CC = (self.TwCC + (2.0 * (geom['stage'] - self.bfd)))
+        radius = (area_CC + area_trap) / (wetted_CC + wetted_trap)
+        celerity_cc = read_celerity(geom['stage'], radius, self.nCC)
+        celerity_CC = ((celerity_trap * area_trap) + (celerity_cc * area_CC)) / (area_trap + area_CC)
+        n_cc = ((self.n * wetted_trap) + (wetted_CC * self.nCC)) / (wetted_trap + wetted_CC)
 
-        geom['wetted_perimeter'][bankfull_indices] = perimeter[bankfull_indices]
-        geom['area'][bankfull_indices] = area[bankfull_indices]
-        geom['top_width'][bankfull_indices] = self.floodplain_width
-        geom['discharge'][bankfull_indices] = discharge[bankfull_indices]
-        geom['dpdy'][bankfull_indices] = 2
+        geom['area'][mask] = area_CC[mask]
+        geom['wetted_perimeter'][mask] = wetted_CC[mask]
+        geom['hydraulic_radius'][mask] = radius[mask]
+        geom['celerity'][mask] = celerity_CC[mask]
+        geom['mannings_n'][mask] = n_cc[mask]
+        geom['top_width'][mask] = self.TwCC
 
-        k_prime = (5 / 3) - ((2 / 3) * (geom['area'] / (geom['top_width'] * geom['wetted_perimeter'])) * geom['dpdy'])
-        geom['celerity'] = k_prime * (geom['discharge'] / geom['area'])
-        geom['celerity'][0] = geom['celerity'][1]
+        geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
         geom['log_q'] = np.log(geom['discharge'])
-
         geom['log_width'] = np.log(geom['top_width'])
 
 
