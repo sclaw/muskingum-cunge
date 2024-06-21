@@ -65,7 +65,6 @@ class BaseReach:
             lateral = np.zeros_like(inflows)
         lateral = (lateral[:-1] + lateral[1:]) / 2
         lateral = np.append(lateral, 0)
-        
         for i in range(len(inflows) - 1):
             q_guess = sum([inflows[i], inflows[i + 1], outflows[i], lateral[i]]) / 3
             last_guess = q_guess * 2
@@ -73,7 +72,8 @@ class BaseReach:
             while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
                 counter += 1
                 last_guess = q_guess.copy()
-                reach_q = sum([inflows[i], inflows[i + 1], outflows[i], q_guess]) / 4
+                # reach_q = sum([inflows[i], inflows[i + 1], outflows[i], q_guess]) / 4
+                reach_q = sum([inflows[i], inflows[i], outflows[i], q_guess]) / 4
 
                 # Interpolate
                 log_reach_q = np.log(reach_q)
@@ -91,9 +91,9 @@ class BaseReach:
                 q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i]) + (c3 * lateral[i])
                 q_guess = max(min(inflows), q_guess)
                 if counter == max_iter:
-                    print('hit max iter')
                     last_guess = q_guess
             outflows.append(q_guess)
+
 
         return np.array(outflows)
     
@@ -412,6 +412,8 @@ class WRFCompound(BaseReach):
         geom['wetted_perimeter'][mask] = wetted_CC[mask]
         geom['hydraulic_radius'][mask] = radius[mask]
         geom['celerity'][mask] = celerity_CC[mask]
+        if np.any(geom['celerity'] < 0) or np.any(np.isnan(geom['celerity'])) or np.any(np.isinf(geom['celerity'])):
+            print('bad celerity')
         geom['mannings_n'][mask] = n_cc[mask]
         geom['top_width'][mask] = self.TwCC
 
