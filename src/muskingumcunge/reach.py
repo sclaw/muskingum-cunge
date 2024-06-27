@@ -301,7 +301,13 @@ class CustomReach(BaseReach):
         self.generate_geometry(stages, top_widths, areas, perimeters)
 
     def generate_geometry(self, stages, top_widths, areas, perimeters):
-        geom = self.geometry
+        geom = {'stage': None, 
+                'top_width': None,
+                'area': None,
+                'wetted_perimeter': None,
+                'hydraulic_radius': None,
+                'mannings_n': None,
+                'discharge': None}
         geom['stage'] = stages
         geom['top_width'] = top_widths
         geom['log_width'] = np.log(geom['top_width'])
@@ -315,7 +321,7 @@ class CustomReach(BaseReach):
             geom['mannings_n'] = np.repeat(self.mannings_n, len(stages))
         geom['discharge'] = (1 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2 / 3)) * (self.slope ** 0.5)
         geom['discharge'][geom['discharge'] <= 0] = geom['discharge'][geom['discharge'] > 0].min()
-        self.clean_looped_rating_curve()
+        geom['discharge'] = self.clean_looped_rating_curve(geom['discharge'])
         geom['log_q'] = np.log(geom['discharge'])
 
         dp = geom['wetted_perimeter'][1:] - geom['wetted_perimeter'][:-1]
@@ -331,16 +337,18 @@ class CustomReach(BaseReach):
         geom['celerity'][0] = geom['celerity'][1]
         geom['celerity'] = np.nan_to_num(geom['celerity'])
         ## TODO:  geom['celerity'][<0] = 0
+        self.geometry = geom
         
 
-    def clean_looped_rating_curve(self):
+    def clean_looped_rating_curve(self, discharge):
         # Enforce monotonic discharge inreases
         q_last = np.nan
-        for ind, q in enumerate(self.geometry['discharge']):
+        for ind, q in enumerate(discharge):
             if q < q_last:
-                self.geometry['discharge'][ind] = q_last
+                discharge[ind] = q_last
             else:
                 q_last = q
+        return discharge
 
 class MuskingumReach:
     
@@ -382,7 +390,13 @@ class WRFCompound(BaseReach):
         self.generate_geometry()
     
     def generate_geometry(self):
-        geom = self.geometry
+        geom = {'stage': None, 
+                'top_width': None,
+                'area': None,
+                'wetted_perimeter': None,
+                'hydraulic_radius': None,
+                'mannings_n': None,
+                'discharge': None}
 
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
 
@@ -420,6 +434,7 @@ class WRFCompound(BaseReach):
         geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
         geom['log_q'] = np.log(geom['discharge'])
         geom['log_width'] = np.log(geom['top_width'])
+        self.geometry = geom
 
 
 class SigmoidalReach(BaseReach):
