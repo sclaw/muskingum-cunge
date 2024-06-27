@@ -39,6 +39,7 @@ def clean_ts(df):
 
 def load_geom(meta_df, source='NWM', geom_dir=None):
     reaches = dict()
+    geom_error_count = 0
     if source == 'HAND':
         hand_tw = pd.read_csv(os.path.join(geom_dir, 'area.csv'))
         hand_el = pd.read_csv(os.path.join(geom_dir, 'el.csv'))
@@ -57,10 +58,12 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
         bf = (tw - bw) / (2 * z)
 
         if source == 'NWM':
-            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=10*bf, stage_resolution=3000)
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=10*bf, stage_resolution=999)
         elif source == 'HAND':
             try:
                 tw = hand_tw[r].to_numpy() / length
+                if np.all(tw == 0):
+                    raise RuntimeError('All top-width values are zero')
                 wp = hand_wp[r].to_numpy() / length
                 ar = hand_ar[r].to_numpy() / length
                 el = hand_el[r].to_numpy()
@@ -68,16 +71,18 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
                 n[el < bf] = ch_n
                 n[el >= bf] = fp_n
                 reaches[r] = CustomReach(n, slope, length, el, tw, ar, wp)
-            except:
+            except Exception as e:
                 # Error catching.  Default to NWM channel
                 print(f'Error loading HAND data for reach {r}.  Defaulting to NWM channel')
-                reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=10*bf, stage_resolution=3000)
+                print(f'Error: {e}')
+                geom_error_count += 1
+                reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=10*bf, stage_resolution=len(hand_tw))
         elif source == 'MUSKINGUM':
             x = meta_df.loc[r, 'MusX']
             k = meta_df.loc[r, 'MusK']
             reaches[r] = MuskingumReach(k, x)
-        
-        # reaches[r].geometry['celerity'] = reaches[r].geometry['celerity'] * 0.1  # debugging
+
+    print(f'Error loading {geom_error_count} / {len(reaches)} reaches')
     return reaches
 
 def execute_by_reach(meta_path):
@@ -96,6 +101,17 @@ def execute_by_reach(meta_path):
 
     # Set up reaches
     reaches = load_geom(meta_df, source=paths['geometry_source'], geom_dir=paths['geometry_dir'])
+
+    # export celerity curves
+    stages = {r: reaches[r].geometry['stage'] for r in reaches}
+    stage_df = pd.DataFrame().from_dict(stages, orient='columns')
+    stage_df.to_csv(os.path.join(paths['out_dir'], "stage.csv"))
+    celerities = {r: reaches[r].geometry['celerity'] for r in reaches}
+    celerity_df = pd.DataFrame().from_dict(celerities, orient='columns')
+    celerity_df.to_csv(os.path.join(paths['out_dir'], "celerity.csv"))
+    discharge = {r: reaches[r].geometry['discharge'] for r in reaches}
+    discharge_df = pd.DataFrame().from_dict(discharge, orient='columns')
+    discharge_df.to_csv(os.path.join(paths['out_dir'], "discharge.csv"))
 
     # Run
     out_df = pd.DataFrame(index=upstream.index, columns=upstream.columns)
@@ -154,7 +170,18 @@ def execute(meta_path):
 
     # Set up reaches
     reaches = load_geom(meta_df, source=paths['geometry_source'], geom_dir=paths['geometry_dir'])
-    
+
+    # export celerity curves
+    stages = {r: reaches[r].geometry['stage'] for r in reaches}
+    stage_df = pd.DataFrame().from_dict(stages, orient='columns')
+    stage_df.to_csv(os.path.join(paths['out_dir'], "stage.csv"))
+    celerities = {r: reaches[r].geometry['celerity'] for r in reaches}
+    celerity_df = pd.DataFrame().from_dict(celerities, orient='columns')
+    celerity_df.to_csv(os.path.join(paths['out_dir'], "celerity.csv"))
+    discharge = {r: reaches[r].geometry['discharge'] for r in reaches}
+    discharge_df = pd.DataFrame().from_dict(discharge, orient='columns')
+    discharge_df.to_csv(os.path.join(paths['out_dir'], "discharge.csv"))
+                                 
     # Set up run
     network = Network(edge_dict)
     network.load_forcings(lateral_df)
