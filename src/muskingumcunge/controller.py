@@ -14,7 +14,7 @@ def create_project(path):
         "lateral_path": os.path.join(os.path.dirname(path), "laterals.csv"),
         "head_path": os.path.join(os.path.dirname(path), "headwaters.csv"),
         "lake_path": os.path.join(os.path.dirname(path), "lake.csv"),
-        "geometry_dir": "",
+        "geometry_dir": "/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/NWM/geometry",
         "geometry_source": "NWM",
         "optimize_dx": True,
         "conserve_mass": False,
@@ -50,15 +50,24 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
         fp_n = meta_df.loc[r, 'nCC']
         slope = meta_df.loc[r, 'slope']
         length = meta_df.loc[r, 'length']
+        da = meta_df.loc[r, 'TotDASqKm']
 
         tw = meta_df.loc[r, 'TopWdth']
         bw = meta_df.loc[r, 'BtmWdth']
         z = meta_df.loc[r, 'ChSlp']
-        tw_cc = meta_df.loc[r, 'TopWdth']
+        tw_cc = meta_df.loc[r, 'TopWdthCC']
         bf = (tw - bw) / (2 * z)
 
         if source == 'NWM':
-            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=10*bf, stage_resolution=999)
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=20*bf, stage_resolution=999)
+        elif source == 'NWM_Regression':
+            tw = 2.44 * (da ** 0.34)
+            a_ch = 0.75 * (da ** 0.53)
+            bf = (a_ch / tw) * 1.25
+            bw = ((2 * a_ch) / bf) - tw
+            z = (tw - bw) / bf
+            tw_cc = 3 * tw
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=20*bf, stage_resolution=999)
         elif source == 'HAND':
             try:
                 tw = hand_tw[r].to_numpy() / length
