@@ -57,8 +57,10 @@ class BaseReach:
         return croute(inflows, dt, reach_length, slope, geometry)
 
     def route_hydrograph(self, inflows, dt, lateral=None, max_iter=1000):
+        dt = dt * 60 * 60  # MUST DELETE AFTER DEBUGGING
         outflows = list()
-        outflows.append((inflows[0]))
+        # outflows.append((inflows[0]))
+        outflows.append(0.9 * inflows[0])
         assert max(inflows) < max(self.geometry['discharge']), 'Rating Curve does not cover range of flowrates in hydrograph'
 
         if lateral is None:
@@ -66,7 +68,8 @@ class BaseReach:
         lateral = (lateral[:-1] + lateral[1:]) / 2
         lateral = np.append(lateral, 0)
         for i in range(len(inflows) - 1):
-            q_guess = sum([inflows[i], inflows[i + 1], outflows[i], lateral[i]]) / 3
+            # q_guess = sum([inflows[i], inflows[i + 1], outflows[i], lateral[i]]) / 3
+            q_guess = sum([inflows[i], inflows[i], outflows[i], lateral[i]]) / 3
             last_guess = q_guess * 2
             counter = 1
             while abs(last_guess - q_guess) > 0.003:  # from handbook of hydrology page 328
@@ -80,16 +83,34 @@ class BaseReach:
                 b_tmp = np.exp(np.interp(log_reach_q, self.geometry['log_q'], self.geometry['log_width']))
                 c_tmp = np.interp(log_reach_q, self.geometry['log_q'], self.geometry['celerity'])
 
-                courant = c_tmp * dt * 60 * 60 / self.reach_length
-                reynold = reach_q / (self.slope * c_tmp * self.reach_length * b_tmp)
+                # courant = c_tmp * dt * 60 * 60 / self.reach_length
+                # reynold = reach_q / (self.slope * c_tmp * self.reach_length * b_tmp)
                 
-                c0 = (-1 + courant + reynold) / (1 + courant + reynold)
-                c1 = (1 + courant - reynold) / (1 + courant + reynold)
-                c2 = (1 - courant + reynold) / (1 + courant + reynold)
-                c3 = (2 * courant) / (1 + courant + reynold)
+                # c0 = (-1 + courant + reynold) / (1 + courant + reynold)
+                # c1 = (1 + courant - reynold) / (1 + courant + reynold)
+                # c2 = (1 - courant + reynold) / (1 + courant + reynold)
+                # c3 = (2 * courant) / (1 + courant + reynold)
 
-                q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i]) + (c3 * lateral[i])
-                q_guess = max(min(inflows), q_guess)
+                # q_guess = (c0 * inflows[i + 1]) + (c1 * inflows[i]) + (c2 * outflows[i]) + (c3 * lateral[i])
+                # q_guess = max(min(inflows), q_guess)
+
+                # WRF way
+                if c_tmp > 0:
+                    Km = self.reach_length / c_tmp
+                    Km = max(dt, Km)
+                else:
+                    Km = dt
+                X = 0.5*(1-(reach_q/(2.0*b_tmp*self.slope*c_tmp*self.reach_length)))
+                X = min(0.5, max(0.0, X))
+                D = (Km*(1.000 - X) + (dt)/2.0000)
+
+                C1 =  (Km*X + dt/2.000000)/D
+                C2 =  (dt/2.0000 - Km*X)/D
+                C3 =  (Km*(1.00000000-X)-dt/2.000000)/D
+                C4 =  (lateral[i]*dt)/D
+                # q_guess = ((C1*inflows[i]) + (C2*inflows[i + 1]) + (C3*outflows[i]))
+                q_guess = ((C1*inflows[i]) + (C2*inflows[i]) + (C3*outflows[i]))
+                
                 if counter == max_iter:
                     last_guess = q_guess
             outflows.append(q_guess)
@@ -376,7 +397,7 @@ class WRFCompound(BaseReach):
     
     def __init__(self, bottom_width, side_slope, bankfull_depth, floodplain_width, channel_n, floodplain_n, slope, reach_length, max_stage=10, stage_resolution=50):
         self.Bw = bottom_width
-        self.z = side_slope  # Should be rise/run per side
+        self.z = side_slope / 2  # Should be rise/run per side
         self.bfd = bankfull_depth
         self.TwCC = floodplain_width
         self.n = channel_n
@@ -401,13 +422,14 @@ class WRFCompound(BaseReach):
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
 
         # Trapezoidal Channel
+        geom['top_width'] = self.Bw + (self.z * geom['stage'] * 2)
         geom['area'] = (self.Bw + geom['stage'] * self.z) * geom['stage']
         geom['wetted_perimeter'] = (self.Bw + 2.0 * geom['stage'] * np.sqrt(1.0 + self.z*self.z))
         geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
         read_celerity = lambda y, r, n: (np.sqrt(self.So)/n)*((5./3.)*r**(2./3.) - ((2./3.)*r**(5./3.)*(2.0*np.sqrt(1.0 + self.z*self.z)/(self.Bw+2.0*y*self.z))))
         geom['celerity'] = read_celerity(geom['stage'], geom['hydraulic_radius'], self.n)
         geom['mannings_n'] = np.repeat(self.n, self.resolution)
-        geom['top_width'] = self.Bw + (2 * self.z * geom['stage'])
+        geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
 
         # Compound Channel
         mask = (geom['stage'] > self.bfd)
@@ -418,20 +440,24 @@ class WRFCompound(BaseReach):
         area_CC = (geom['stage'] - self.bfd) * self.TwCC
         wetted_CC = (self.TwCC + (2.0 * (geom['stage'] - self.bfd)))
         radius = (area_CC + area_trap) / (wetted_CC + wetted_trap)
-        celerity_cc = read_celerity(geom['stage'], radius, self.nCC)
-        celerity_CC = ((celerity_trap * area_trap) + (celerity_cc * area_CC)) / (area_trap + area_CC)
+        # celerity_cc = read_celerity(geom['stage'], radius, self.nCC)
+        celerity_cc = (np.sqrt(self.So)/self.nCC)*((5./3.)*(geom['stage'] - self.bfd)**(2./3.))
+        celerity_cc = ((celerity_trap * area_trap) + (celerity_cc * area_CC)) / (area_trap + area_CC)
         n_cc = ((self.n * wetted_trap) + (wetted_CC * self.nCC)) / (wetted_trap + wetted_CC)
+        discharge_cc = (1.0 / self.nCC) * area_CC * ((geom['stage'] - self.bfd) ** (2.0 / 3.0)) * (self.So ** 0.5)
+        discharge_trap = (1.0 / self.n) * area_trap * ((area_trap / wetted_trap) ** (2.0 / 3.0)) * (self.So ** 0.5)
 
-        geom['area'][mask] = area_CC[mask]
+        geom['area'][mask] = area_CC[mask] + area_trap
         geom['wetted_perimeter'][mask] = wetted_CC[mask]
         geom['hydraulic_radius'][mask] = radius[mask]
-        geom['celerity'][mask] = celerity_CC[mask]
+        geom['celerity'][mask] = celerity_cc[mask]
         if np.any(geom['celerity'] < 0) or np.any(np.isnan(geom['celerity'])) or np.any(np.isinf(geom['celerity'])):
             print('bad celerity')
         geom['mannings_n'][mask] = n_cc[mask]
         geom['top_width'][mask] = self.TwCC
+        geom['discharge'][mask] = discharge_cc[mask] + discharge_trap
 
-        geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
+        # geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
         geom['log_q'] = np.log(geom['discharge'])
         geom['log_width'] = np.log(geom['top_width'])
         self.geometry = geom
