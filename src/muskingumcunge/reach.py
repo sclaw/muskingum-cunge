@@ -56,11 +56,13 @@ class BaseReach:
 
         return croute(inflows, dt, reach_length, slope, geometry)
 
-    def route_hydrograph(self, inflows, dt, lateral=None, max_iter=1000):
+    def route_hydrograph(self, inflows, dt, lateral=None, max_iter=1000, initial_outflow=None):
         dt = dt * 60 * 60  # MUST DELETE AFTER DEBUGGING
         outflows = list()
-        # outflows.append((inflows[0]))
-        outflows.append(0.9 * inflows[0])
+        if initial_outflow is not None:
+            outflows.append(initial_outflow)
+        else:
+            outflows.append(inflows[0])
         assert max(inflows) < max(self.geometry['discharge']), 'Rating Curve does not cover range of flowrates in hydrograph'
 
         if lateral is None:
@@ -118,6 +120,12 @@ class BaseReach:
 
         return np.array(outflows)
     
+    def route_hydrograph_wrf_hydro(self, inflows, dt, lateral=None, max_iter=1000, initial_outflow=None):
+        pass
+
+
+
+
     def route_hydrograph_mct(self, inflows, dt, max_iter=1000):
         outflows = list()
         outflows.append(inflows[0])
@@ -436,16 +444,18 @@ class WRFCompound(BaseReach):
         area_trap = (self.Bw + self.bfd * self.z) * self.bfd
         wetted_trap = (self.Bw + 2.0 * self.bfd * np.sqrt(1.0 + self.z*self.z))
         hr_trap = area_trap / wetted_trap
-        celerity_trap = read_celerity(self.bfd, hr_trap, self.n)
+        # celerity_trap = read_celerity(self.bfd, hr_trap, self.n)
         area_CC = (geom['stage'] - self.bfd) * self.TwCC
         wetted_CC = (self.TwCC + (2.0 * (geom['stage'] - self.bfd)))
         radius = (area_CC + area_trap) / (wetted_CC + wetted_trap)
+        celerity_trap = read_celerity(self.bfd, radius, self.n)  # Is this an error?  I feel like radius should be capped at the bankfull radius?
         # celerity_cc = read_celerity(geom['stage'], radius, self.nCC)
         celerity_cc = (np.sqrt(self.So)/self.nCC)*((5./3.)*(geom['stage'] - self.bfd)**(2./3.))
         celerity_cc = ((celerity_trap * area_trap) + (celerity_cc * area_CC)) / (area_trap + area_CC)
         n_cc = ((self.n * wetted_trap) + (wetted_CC * self.nCC)) / (wetted_trap + wetted_CC)
-        discharge_cc = (1.0 / self.nCC) * area_CC * ((geom['stage'] - self.bfd) ** (2.0 / 3.0)) * (self.So ** 0.5)
-        discharge_trap = (1.0 / self.n) * area_trap * ((area_trap / wetted_trap) ** (2.0 / 3.0)) * (self.So ** 0.5)
+        # discharge_cc = (1.0 / self.nCC) * area_CC * ((geom['stage'] - self.bfd) ** (2.0 / 3.0)) * (self.So ** 0.5)
+        # discharge_trap = (1.0 / self.n) * area_trap * ((area_trap / wetted_trap) ** (2.0 / 3.0)) * (self.So ** 0.5)
+        discharge_cc = (1.0 / self.nCC) * (area_CC + area_trap) * (radius ** (2.0 / 3.0)) * (self.So ** 0.5)
 
         geom['area'][mask] = area_CC[mask] + area_trap
         geom['wetted_perimeter'][mask] = wetted_CC[mask]
@@ -455,7 +465,8 @@ class WRFCompound(BaseReach):
             print('bad celerity')
         geom['mannings_n'][mask] = n_cc[mask]
         geom['top_width'][mask] = self.TwCC
-        geom['discharge'][mask] = discharge_cc[mask] + discharge_trap
+        # geom['discharge'][mask] = discharge_cc[mask] + discharge_trap
+        geom['discharge'][mask] = discharge_cc[mask]
 
         # geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
         geom['log_q'] = np.log(geom['discharge'])
