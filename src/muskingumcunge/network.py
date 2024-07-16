@@ -22,6 +22,7 @@ class Network:
         self.forcing_df = None
         self.channel_outflows = {k: None for k in self.edge_dict.keys()}
         self.channel_outflows_stage = {k: None for k in self.edge_dict.keys()}
+        self.init_outflows = {k: None for k in self.edge_dict.keys()}
         self.out_df = None
 
     def calculate_post_order(self):
@@ -34,6 +35,7 @@ class Network:
             children = self.chlid_dict[cur]
             if len(children) == 0:
                 self.post_order.append(cur)
+                self.headwaters.append(cur)
             elif all([c in self.post_order for c in children]):
                 self.post_order.append(cur)
             else:
@@ -65,11 +67,9 @@ class Network:
         for n in missing:
             self.channel_outflows[n] = np.zeros(len(self.forcing_df))
 
-    def load_lake_forcings(self, lake_forcings):
-        lake_forcings = lake_forcings.fillna(0)
-        for n in lake_forcings.columns:
-            self.channel_outflows[n] = lake_forcings[n].to_numpy()
-            self.headwaters.append(n)
+    def load_initial_conditions(self, initial_conditions):
+        # loads initial outflows for each reach
+        self.init_outflows = initial_conditions
 
     def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle'):
         # calculate total inflow
@@ -104,7 +104,11 @@ class Network:
                         l = laterals
                     else:
                         l = None
-                    routed = reach.route_hydrograph(routed, dt, lateral=l)
+                    if i == 0 and node in self.init_outflows:
+                        init_out = self.init_outflows[node]
+                    else:
+                        init_out = None
+                    routed = reach.route_hydrograph(routed, dt, lateral=l, initial_outflow=init_out)
                 except AssertionError as e:
                     print(f"Error routing {node}: {e}")
             
