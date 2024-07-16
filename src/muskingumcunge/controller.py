@@ -54,9 +54,9 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
 
         tw = meta_df.loc[r, 'TopWdth']
         bw = meta_df.loc[r, 'BtmWdth']
-        z = meta_df.loc[r, 'ChSlp']
+        z = 2 / (meta_df.loc[r, 'ChSlp'])
         tw_cc = meta_df.loc[r, 'TopWdthCC']
-        bf = (tw - bw) / (2 * z)
+        bf = (tw - bw) / (z)
 
         if source == 'NWM':
             reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=20*bf, stage_resolution=999)
@@ -166,10 +166,27 @@ def execute(meta_path):
     lake_df = clean_ts(lake_df)
     lake_df = lake_df.reindex(sorted(lake_df.columns), axis=1)
 
-    # # resample to 5 minute increments
-    # lateral_df = lateral_df.resample('5T').ffill()
-    # head_df = head_df.resample('5T').ffill()
-    # lake_df = lake_df.resample('5T').ffill()
+    downstream = pd.read_csv(os.path.join(paths['base_dir'], 'downstream_hydrographs.csv'))
+    downstream = clean_ts(downstream)
+    downstream = downstream.reindex(sorted(downstream.columns), axis=1)
+
+    # pre process lakes
+    tmp_cols = list(lake_df.columns)
+    lakes = [float(c) for c in tmp_cols]
+    for l in lakes:
+        # Find root of each lake
+        lake_reaches = list(meta_df[meta_df['NHDWaterbodyComID'] == l].index)
+        lake_root = lake_reaches[0]
+        outflow = meta_df.loc[lake_root, 'ds_comid']
+        while outflow in lake_reaches:
+            lake_root = meta_df.loc[lake_root, 'ds_comid']
+            outflow = meta_df.loc[lake_root, 'ds_comid']
+        head_df[lake_root] = downstream[lake_root]
+
+    # resample to 5 minute increments
+    lateral_df = lateral_df.resample('5T').ffill()
+    head_df = head_df.resample('5T').ffill()
+    lake_df = lake_df.resample('5T').ffill()
 
     # Error checking
     missing_forcings = list(set(meta_df.index).difference(set(lateral_df.columns)))
@@ -195,8 +212,15 @@ def execute(meta_path):
     network = Network(edge_dict)
     network.load_forcings(lateral_df)
     network.load_headwater_forcings(head_df)
-    network.load_lake_forcings(lake_df)
     network.load_reaches(reaches)
+
+    # Set up initial outflows
+    for n in network.post_order:
+        obs_out = downstream[n].to_numpy()[0]
+        if np.isnan(obs_out):
+            obs_out = None
+        network.init_outflows[n] = obs_out
+    network.load_initial_conditions(network.init_outflows)  # kind of unnecessary
 
     # Run model
     network.run_event(optimize_dx=paths['optimize_dx'], conserve_mass=paths['conserve_mass'], lat_addition=paths['lat_addition'])
