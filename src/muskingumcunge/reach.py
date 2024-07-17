@@ -119,12 +119,6 @@ class BaseReach:
 
 
         return np.array(outflows)
-    
-    def route_hydrograph_wrf_hydro(self, inflows, dt, lateral=None, max_iter=1000, initial_outflow=None):
-        pass
-
-
-
 
     def route_hydrograph_mct(self, inflows, dt, max_iter=1000):
         outflows = list()
@@ -417,8 +411,40 @@ class WRFCompound(BaseReach):
         self.resolution = stage_resolution
 
         self.generate_geometry()
-    
+
     def generate_geometry(self):
+        geom = dict()
+        geom = {'stage': None, 
+                'top_width': None,
+                'area': None,
+                'wetted_perimeter': None,
+                'hydraulic_radius': None,
+                'mannings_n': None,
+                'discharge': None}
+        
+        geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
+        for param in ['top_width', 'area', 'wetted_perimeter', 'hydraulic_radius', 'mannings_n', 'discharge', 'celerity']:
+            geom[param] = np.zeros(geom['stage'].shape)
+
+        for ind, h_0 in enumerate(geom['stage']):
+            Ck, WP, WPC, n, nCC, AREA, AREAC, R, So = self.calc_params(h_0)
+            if h_0 > self.bfd:
+                Twl = self.TwCC
+            else:
+                Twl = self.Bw + 2.0*self.z*h_0
+            q = ((1/(((WP*n)+(WPC*nCC))/(WP+WPC))) * (AREA+AREAC) * (R**(2./3.)) * np.sqrt(So))
+            geom['top_width'][ind] = Twl
+            geom['area'][ind] = AREA + AREAC
+            geom['wetted_perimeter'][ind] = WP + WPC
+            geom['hydraulic_radius'][ind] = R
+            geom['mannings_n'][ind] = ((n * WP) + (nCC * WPC)) / (WP + WPC)
+            geom['celerity'][ind] = Ck
+            geom['discharge'][ind] = q
+        
+        self.geometry = geom
+
+    
+    def generate_geometry_old(self):
         geom = {'stage': None, 
                 'top_width': None,
                 'area': None,
@@ -429,49 +455,276 @@ class WRFCompound(BaseReach):
 
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
 
+        # rename variables to match WRF code
+        Bw = self.Bw
+        Tw = self.Bw + (2 * self.bfd * self.z)
+        TwCC = self.TwCC
+        nCC = self.nCC
+        So = self.So
+        n = self.n
+        z = self.z
+        
+        AREA, AREAC = None, None
+        Z = None  # trapezoid distance
+        R, RC = None, None
+        WP, WPC = None, None
+        h_0 = geom['stage']
+        bfd = self.bfd
+
+        Ck = None
+        Twl = Bw + 2.0*z*h_0  # Top width at simulated flow
+
+        compound_mask = (geom['stage'] > self.bfd)
+
         # Trapezoidal Channel
-        geom['top_width'] = self.Bw + (self.z * geom['stage'] * 2)
-        geom['area'] = (self.Bw + geom['stage'] * self.z) * geom['stage']
-        geom['wetted_perimeter'] = (self.Bw + 2.0 * geom['stage'] * np.sqrt(1.0 + self.z*self.z))
-        geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
-        read_celerity = lambda y, r, n: (np.sqrt(self.So)/n)*((5./3.)*r**(2./3.) - ((2./3.)*r**(5./3.)*(2.0*np.sqrt(1.0 + self.z*self.z)/(self.Bw+2.0*y*self.z))))
-        geom['celerity'] = read_celerity(geom['stage'], geom['hydraulic_radius'], self.n)
-        geom['mannings_n'] = np.repeat(self.n, self.resolution)
-        geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
+        AREA = (Bw + h_0 * z ) * h_0
+        WP = (Bw + 2.0 * h_0 * np.sqrt(1.0 + z*z))
+        R = AREA / WP
 
         # Compound Channel
-        mask = (geom['stage'] > self.bfd)
-        area_trap = (self.Bw + self.bfd * self.z) * self.bfd
-        wetted_trap = (self.Bw + 2.0 * self.bfd * np.sqrt(1.0 + self.z*self.z))
-        hr_trap = area_trap / wetted_trap
-        # celerity_trap = read_celerity(self.bfd, hr_trap, self.n)
-        area_CC = (geom['stage'] - self.bfd) * self.TwCC
-        wetted_CC = (self.TwCC + (2.0 * (geom['stage'] - self.bfd)))
-        radius = (area_CC + area_trap) / (wetted_CC + wetted_trap)
-        celerity_trap = read_celerity(self.bfd, radius, self.n)  # Is this an error?  I feel like radius should be capped at the bankfull radius?
-        # celerity_cc = read_celerity(geom['stage'], radius, self.nCC)
-        celerity_cc = (np.sqrt(self.So)/self.nCC)*((5./3.)*(geom['stage'] - self.bfd)**(2./3.))
-        celerity_cc = ((celerity_trap * area_trap) + (celerity_cc * area_CC)) / (area_trap + area_CC)
-        n_cc = ((self.n * wetted_trap) + (wetted_CC * self.nCC)) / (wetted_trap + wetted_CC)
-        # discharge_cc = (1.0 / self.nCC) * area_CC * ((geom['stage'] - self.bfd) ** (2.0 / 3.0)) * (self.So ** 0.5)
-        # discharge_trap = (1.0 / self.n) * area_trap * ((area_trap / wetted_trap) ** (2.0 / 3.0)) * (self.So ** 0.5)
-        discharge_cc = (1.0 / self.nCC) * (area_CC + area_trap) * (radius ** (2.0 / 3.0)) * (self.So ** 0.5)
+        AREA[compound_mask] =  ((Bw + bfd * z) * bfd)
+        AREAC = np.zeros(AREA.shape)
+        AREAC[compound_mask] = (TwCC * (h_0 -bfd))[compound_mask]
+        WP[compound_mask] = (Bw + 2.0 * bfd * np.sqrt(1.0 + z*z))
+        WPC = np.zeros(WP.shape)
+        WPC[compound_mask] = (TwCC + (2.0 * (h_0-bfd)))[compound_mask]
+        R[compound_mask]   = ((AREA + AREAC)/(WP +WPC))[compound_mask]
 
-        geom['area'][mask] = area_CC[mask] + area_trap
-        geom['wetted_perimeter'][mask] = wetted_CC[mask]
-        geom['hydraulic_radius'][mask] = radius[mask]
-        geom['celerity'][mask] = celerity_cc[mask]
-        if np.any(geom['celerity'] < 0) or np.any(np.isnan(geom['celerity'])) or np.any(np.isinf(geom['celerity'])):
-            print('bad celerity')
-        geom['mannings_n'][mask] = n_cc[mask]
-        geom['top_width'][mask] = self.TwCC
-        # geom['discharge'][mask] = discharge_cc[mask] + discharge_trap
-        geom['discharge'][mask] = discharge_cc[mask]
+        R[np.isinf(R)] = 0.0
+
+        # Trapazoidal Channel
+        Ck = (np.sqrt(So)/n)*((5./3.)*R**(2./3.) - ((2./3.)*R**(5./3.)*(2.0*np.sqrt(1.0 + z*z)/(Bw+2.0*h_0*z))))
+        Ck[h_0 == 0] = 0.0
+
+        # Compound Channel
+        Ck[compound_mask] = (((np.sqrt(So)/n)*((5./3.)*R**(2./3.) - ((2./3.)*R**(5./3.)*(2.0*np.sqrt(1.0 + z*z)/(Bw+2.0*bfd*z))))*AREA + ((np.sqrt(So)/(nCC))*(5./3.)*(h_0-bfd)**(2./3.))*AREAC)/(AREA+AREAC))[compound_mask]
+        Ck[Ck < 0] = 0.0
+
+        discharge = ((1/(((WP*n)+(WPC*nCC))/(WP+WPC))) * (AREA+AREAC) * (R**(2./3.)) * np.sqrt(So))
+
+        # log to class variables
+        self.geometry['stage'] = geom['stage']
+        self.geometry['top_width'] = Twl
+        self.geometry['celerity'] = Ck
+        self.geometry['discharge'] = discharge
+        self.geometry['log_q'] = np.log(self.geometry['discharge'])
+        self.geometry['log_width'] = np.log(self.geometry['top_width'])
+
+
+        # geom['top_width'] = self.Bw + (self.z * geom['stage'] * 2)
+        # geom['area'] = (self.Bw + geom['stage'] * self.z) * geom['stage']
+        # geom['wetted_perimeter'] = (self.Bw + 2.0 * geom['stage'] * np.sqrt(1.0 + self.z*self.z))
+        # geom['hydraulic_radius'] = geom['area'] / geom['wetted_perimeter']
+        # read_celerity = lambda y, r, n: (np.sqrt(self.So)/n)*((5./3.)*r**(2./3.) - ((2./3.)*r**(5./3.)*(2.0*np.sqrt(1.0 + self.z*self.z)/(self.Bw+2.0*y*self.z))))
+        # geom['celerity'] = read_celerity(geom['stage'], geom['hydraulic_radius'], self.n)
+        # geom['mannings_n'] = np.repeat(self.n, self.resolution)
+        # geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
+
+        # # Compound Channel
+        # mask = (geom['stage'] > self.bfd)
+        # area_trap = (self.Bw + self.bfd * self.z) * self.bfd
+        # wetted_trap = (self.Bw + 2.0 * self.bfd * np.sqrt(1.0 + self.z*self.z))
+        # hr_trap = area_trap / wetted_trap
+        # # celerity_trap = read_celerity(self.bfd, hr_trap, self.n)
+        # area_CC = (geom['stage'] - self.bfd) * self.TwCC
+        # wetted_CC = (self.TwCC + (2.0 * (geom['stage'] - self.bfd)))
+        # radius = (area_CC + area_trap) / (wetted_CC + wetted_trap)
+        # celerity_trap = read_celerity(self.bfd, radius, self.n)  # Is this an error?  I feel like radius should be capped at the bankfull radius?
+        # # celerity_cc = read_celerity(geom['stage'], radius, self.nCC)
+        # celerity_cc = (np.sqrt(self.So)/self.nCC)*((5./3.)*(geom['stage'] - self.bfd)**(2./3.))
+        # celerity_cc = ((celerity_trap * area_trap) + (celerity_cc * area_CC)) / (area_trap + area_CC)
+        # n_cc = ((self.n * wetted_trap) + (wetted_CC * self.nCC)) / (wetted_trap + wetted_CC)
+        # # discharge_cc = (1.0 / self.nCC) * area_CC * ((geom['stage'] - self.bfd) ** (2.0 / 3.0)) * (self.So ** 0.5)
+        # # discharge_trap = (1.0 / self.n) * area_trap * ((area_trap / wetted_trap) ** (2.0 / 3.0)) * (self.So ** 0.5)
+        # discharge_cc = (1.0 / self.nCC) * (area_CC + area_trap) * (radius ** (2.0 / 3.0)) * (self.So ** 0.5)
+
+        # geom['area'][mask] = area_CC[mask] + area_trap
+        # geom['wetted_perimeter'][mask] = wetted_CC[mask]
+        # geom['hydraulic_radius'][mask] = radius[mask]
+        # geom['celerity'][mask] = celerity_cc[mask]
+        # if np.any(geom['celerity'] < 0) or np.any(np.isnan(geom['celerity'])) or np.any(np.isinf(geom['celerity'])):
+        #     print('bad celerity')
+        # geom['mannings_n'][mask] = n_cc[mask]
+        # geom['top_width'][mask] = self.TwCC
+        # # geom['discharge'][mask] = discharge_cc[mask] + discharge_trap
+        # geom['discharge'][mask] = discharge_cc[mask]
 
         # geom['discharge'] = (1.0 / geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius'] ** (2.0 / 3.0)) * (self.So ** 0.5)
-        geom['log_q'] = np.log(geom['discharge'])
-        geom['log_width'] = np.log(geom['top_width'])
-        self.geometry = geom
+        # geom['log_q'] = np.log(geom['discharge'])
+        # geom['log_width'] = np.log(geom['top_width'])
+        # self.geometry = geom
+
+    def calc_params(self, h_0):
+        Bw = self.Bw
+        bfd = self.bfd
+        z = self.z
+        TwCC = self.TwCC
+        So = self.So
+        n = self.n
+        nCC = self.nCC
+
+        WPC = 0
+        AREAC = 0
+
+        if h_0 > bfd:
+            AREA = (Bw + bfd * z) * bfd
+            AREAC = TwCC * (h_0 - bfd)
+            WP = (Bw + 2.0 * bfd * np.sqrt(1.0 + z*z))
+            WPC = TwCC + (2.0 * (h_0 - bfd))
+            R = (AREA + AREAC) / (WP + WPC)
+        else:
+            AREA = (Bw + h_0 * z) * h_0
+            WP = (Bw + 2.0 * h_0 * np.sqrt(1.0 + z*z))
+            if WP > 0:
+                R = AREA / WP
+            else:
+                R = 0.0
+        
+        if h_0 > bfd:
+            Ck = ((np.sqrt(So)/n)*((5./3.)*R**(2./3.) - ((2./3.)*R**(5./3.)*(2.0*np.sqrt(1.0 + z*z)/(Bw+2.0*bfd*z))))*AREA + ((np.sqrt(So)/(nCC))*(5./3.)*(h_0-bfd)**(2./3.))*AREAC)/(AREA+AREAC)
+            Ck = max(0.0, Ck)
+        else:
+            if h_0 > 0.0:
+                Ck = max(0.0,(np.sqrt(So)/n)*((5./3.)*R**(2./3.) - ((2./3.)*R**(5./3.)*(2.0*np.sqrt(1.0 + z*z)/(Bw+2.0*h_0*z)))))
+            else:
+                Ck = 0.0
+        return Ck, WP, WPC, n, nCC, AREA, AREAC, R, So
+
+    def route_hydrograph(self, inflows, dt, lateral=None, max_iter=1000, initial_outflow=None):
+        dt = dt * 60 * 60  # MUST DELETE AFTER DEBUGGING
+        dx = self.reach_length
+        outflows = list()
+        if initial_outflow is not None:
+            outflows.append(initial_outflow)
+        else:
+            outflows.append(inflows[0])
+        assert max(inflows) < max(self.geometry['discharge']), 'Rating Curve does not cover range of flowrates in hydrograph'
+
+        if lateral is None:
+            lateral = np.zeros_like(inflows)
+        lateral = (lateral[:-1] + lateral[1:]) / 2
+        lateral = np.append(lateral, 0)
+
+        # local variables
+        mindepth = 0.01
+        max_iter = 100
+        short_ts = True
+
+        # initialize secant method
+        depth = np.interp(outflows[0], self.geometry['discharge'], self.geometry['stage'])
+        h     = (depth * 1.33) + mindepth
+        h_0   = (depth * 0.67)
+
+        for i in range(len(inflows) - 1):
+            if not ((inflows[i] > 0.0) or (inflows[i + 1] > 0.0) or (outflows[i] > 0.0)):
+                outflows.append(0.0)
+                continue
+            Qj_0 = 0.0
+            iter = 0
+            rerror = 1.0
+            aerror = 0.01
+            tries = 0
+
+            while rerror > 0.01 and aerror >= mindepth and iter <= max_iter:
+                qup = inflows[i]
+                if short_ts:
+                    quc = inflows[i]
+                else:
+                    quc = inflows[i + 1]
+                qdp = outflows[i]
+
+                # Lower Interval
+                # Ck, WP, WPC, n, nCC, AREA, AREAC, R, So = self.calc_params(h_0)
+                # if h_0 > self.bfd:
+                #     Twl = self.TwCC
+                # else:
+                #     Twl = self.Bw + 2.0*self.z*h_0
+                # q = ((1/(((WP*n)+(WPC*nCC))/(WP+WPC))) * (AREA+AREAC) * (R**(2./3.)) * np.sqrt(So))
+                Ck = np.interp(h_0, self.geometry['stage'], self.geometry['celerity'])
+                Twl = np.interp(h_0, self.geometry['stage'], self.geometry['top_width'])
+                q = np.interp(h_0, self.geometry['stage'], self.geometry['discharge'])
+                
+                if Ck > 0.000000:
+                    Km = max(dt, dx / Ck)
+                else:
+                    Km = dt
+                
+                X = 0.5*(1-(Qj_0/(2.0*Twl*self.So*Ck*dx)))
+                X = min(0.5, max(0.0, X))
+
+                D = (Km*(1.000 - X) + dt/2.0000)
+
+                C1 = (Km*X + dt/2.000000)/D
+                C2 = (dt/2.0000 - Km*X)/D
+                C3 = (Km*(1.00000000-X)-dt/2.000000)/D
+                C4 = (lateral[i]*dt)/D
+                Qj_0 = ((C1*quc) + (C2*qup) + (C3*qdp) + C4) - q
+
+                # Upper Interval
+                # Ck, WP, WPC, n, nCC, AREA, AREAC, R, So = self.calc_params(h)
+                # if h > self.bfd:
+                #     Twl = self.TwCC
+                # else:
+                #     Twl = self.Bw + 2.0*self.z*h
+                # q = ((1/(((WP*n)+(WPC*nCC))/(WP+WPC))) * (AREA+AREAC) * (R**(2./3.)) * np.sqrt(So))
+                Ck = np.interp(h, self.geometry['stage'], self.geometry['celerity'])
+                Twl = np.interp(h, self.geometry['stage'], self.geometry['top_width'])
+                q = np.interp(h, self.geometry['stage'], self.geometry['discharge'])
+
+                if Ck > 0.000000:
+                    Km = max(dt, dx / Ck)
+                else:
+                    Km = dt
+                
+                if Ck > 0.0:
+                    X = 0.5*(1-(((C1*qup)+(C2*quc)+(C3*qdp) + C4)/(2.0*Twl*self.slope*Ck*dx)))
+                    X = min(0.5, max(0.25, X))
+                else:
+                    X = 0.5
+
+                D = (Km*(1.000 - X) + dt/2.0000)
+
+                C1 = (Km*X + dt/2.000000)/D
+                C2 = (dt/2.0000 - Km*X)/D
+                C3 = (Km*(1.00000000-X)-dt/2.000000)/D
+                C4 = (lateral[i]*dt)/D
+                Qj = ((C1*quc) + (C2*qup) + (C3*qdp) + C4) - q
+
+                # Secant Method
+                if Qj - Qj_0 != 0:
+                    h_1 = h - ((Qj * (h_0 - h))/(Qj_0 - Qj))
+                    if h_1 < 0.0:
+                        h_1 = h
+                else:
+                    h_1 = h
+                
+                if h > 0.0:
+                    rerror = abs((h_1 - h) / h)
+                    aerror = abs(h_1 - h)
+                else:
+                    rerror = 0.0
+                    aerror = 0.9
+                
+                h_0 = max(0.0, h)
+                h = max(0.0, h_1)
+                iter += 1
+
+                if h < mindepth:
+                    break
+
+                if iter >= max_iter:
+                    tries += 1
+                    if tries <= 4:
+                        h = h * 1.33
+                        h_0 = h_0 * 0.67
+                        max_iter += 25
+
+            qdc =  ((C1*qup)+(C2*quc)+(C3*qdp) + C4)
+            if qdc < 0.0:
+                qdc = 0.0
+            outflows.append(qdc)
+
+        return np.array(outflows)
 
 
 class SigmoidalReach(BaseReach):
