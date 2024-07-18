@@ -1,6 +1,7 @@
 from collections import defaultdict
 import pandas as pd
 import numpy as np
+import time
 
 
 class Network:
@@ -73,12 +74,16 @@ class Network:
 
     def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle'):
         # calculate total inflow
-        volume_in = self.forcing_df.sum().sum() + np.sum([self.channel_outflows[c].sum() for c in self.headwaters])
+        t_start = time.perf_counter()
         dt = (self.forcing_df.index[1] - self.forcing_df.index[0]).seconds / 3600
-        counter = 1
+        counter = 0
+        pct5 = int(len(self.post_order) / 20)
         for node in self.post_order:
-            if counter % 100 == 0:
-                print(f"{counter} / {len(self.post_order)}")
+            counter += 1
+            if counter % pct5 == 0:
+                pct_done = int(100 * counter / len(self.post_order))
+                print(f'{pct_done}% done')
+                
             reach = self.reach_dict[node]
             if node in self.headwaters:
                 continue
@@ -108,7 +113,7 @@ class Network:
                         init_out = self.init_outflows[node]
                     else:
                         init_out = None
-                    routed = reach.route_hydrograph(routed, dt, lateral=l, initial_outflow=init_out)
+                    routed = reach.route_hydrograph_wrf_secant(routed, dt, lateral=l, initial_outflow=init_out)
                 except AssertionError as e:
                     print(f"Error routing {node}: {e}")
             
@@ -123,12 +128,7 @@ class Network:
             self.channel_outflows[node] = routed
             self.channel_outflows_stage[node] = np.interp(routed, reach.geometry['discharge'], reach.geometry['stage'])
         
-        # calculate total outflow
-        us_root = self.chlid_dict[self.root]
-        us_hydro = [self.channel_outflows[c] for c in us_root]
-        self.channel_outflows[self.root] = np.sum(us_hydro, axis=0)
-        volume_out = self.channel_outflows[self.root].sum()
-        print(f"Volume conservation = {round(100 *volume_out / volume_in, 2)} %")
+        print(f'Routing complete in {round(time.perf_counter() - t_start, 1)} seconds')
 
         # Post-processing
         out_df = pd.DataFrame(self.channel_outflows)
