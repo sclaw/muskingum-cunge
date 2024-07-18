@@ -183,8 +183,7 @@ class BaseReach:
         else:
             outflows.append(inflows[0])
 
-        if max(inflows) > max(self.geometry['discharge']):  # putting in for loop for debugging
-            old_max_stage = self.geometry['stage'][-1]
+        if max(inflows) > max(self.geometry['discharge']):
             add_res = 200
             add_stages = np.linspace(0, 9 * self.geometry['stage'][-1], add_res)
             add_widths = np.repeat(self.geometry['top_width'][-1], add_res)
