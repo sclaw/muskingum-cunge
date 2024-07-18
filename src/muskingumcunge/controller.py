@@ -59,7 +59,7 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
         bf = (tw - bw) / (z)
 
         if source == 'NWM':
-            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=20*bf, stage_resolution=999)
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=50*bf, stage_resolution=1000)
         elif source == 'NWM_Regression':
             tw = 2.44 * (da ** 0.34)
             a_ch = 0.75 * (da ** 0.53)
@@ -67,7 +67,7 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
             bw = ((2 * a_ch) / bf) - tw
             z = (tw - bw) / bf
             tw_cc = 3 * tw
-            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=20*bf, stage_resolution=999)
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=50*bf, stage_resolution=1000)
         elif source == 'HAND':
             try:
                 tw = hand_tw[r].to_numpy() / length
@@ -85,7 +85,7 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
                 print(f'Error loading HAND data for reach {r}.  Defaulting to NWM channel')
                 print(f'Error: {e}')
                 geom_error_count += 1
-                reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=10*bf, stage_resolution=len(hand_tw))
+                reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=12*bf, stage_resolution=len(hand_tw))
         elif source == 'MUSKINGUM':
             x = meta_df.loc[r, 'MusX']
             k = meta_df.loc[r, 'MusK']
@@ -184,9 +184,10 @@ def execute(meta_path):
         head_df[lake_root] = downstream[lake_root]
 
     # resample to 5 minute increments
-    lateral_df = lateral_df.resample('5T').ffill()
-    head_df = head_df.resample('5T').ffill()
-    lake_df = lake_df.resample('5T').ffill()
+    resample_dt = pd.Timedelta('5m')
+    lateral_df = lateral_df.resample(resample_dt).ffill()
+    head_df = head_df.resample(resample_dt).ffill()
+    lake_df = lake_df.resample(resample_dt).ffill()
 
     # Error checking
     missing_forcings = list(set(meta_df.index).difference(set(lateral_df.columns)))
