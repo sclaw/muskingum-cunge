@@ -184,61 +184,28 @@ class BaseReach:
             outflows.append(inflows[0])
 
         if max(inflows) > max(self.geometry['discharge']):  # putting in for loop for debugging
-            # for param in ['top_width', 'celerity', 'discharge', 'stage']:
-            #     self.geometry[param] = np.append(self.geometry[param], np.linspace(self.geometry[param][-1] + 1, 9999, 100))
-                # extrapolate out to max inflow + 1
-            add_stages = np.linspace(0, 9 * self.geometry['stage'][-1], 200)
-            # define trend range for extrapolation as last meter of stages or 0.5 bankfull depth
-            start_trend = np.argmax(self.geometry['stage'] > self.geometry['stage'][-1] - 0.25)
-            # start_trend = int(len(self.geometry['stage']) - (len(self.geometry['stage']) / 40))
-            # start_trend = int(len(self.geometry['stage']) - 6)
+            old_max_stage = self.geometry['stage'][-1]
+            add_res = 200
+            add_stages = np.linspace(0, 9 * self.geometry['stage'][-1], add_res)
+            add_widths = np.repeat(self.geometry['top_width'][-1], add_res)
+            add_areas = (add_stages * add_widths) + self.geometry['area'][-1]
+            add_wp = (2 * add_stages) + self.geometry['wetted_perimeter'][-1]
+            add_hr = add_areas / add_wp
+            add_n = np.repeat(self.geometry['mannings_n'][-1], add_res)
+            add_q = (1 / add_n) * add_areas * (add_hr ** (2 / 3)) * (self.slope ** 0.5)
+            dpdy = np.repeat(2, add_res)
+            k_prime = (5 / 3) - ((2 / 3) * (add_areas / (add_widths * add_wp)) * dpdy)
+            add_c = k_prime * (add_q / add_areas)
 
-            params = ['top_width', 'celerity', 'discharge']
-            scales = ['linear', 'loglog', 'linear']
-            import matplotlib.pyplot as plt
-            import os
-            for param, scale in zip(params, scales):
-                fig, ax = plt.subplots()
-                ax.plot(self.geometry['stage'], self.geometry[param], c='k')
-                if scale == 'log':
-                    end_trend = (np.log(self.geometry[param][-1]) - np.log(self.geometry[param][start_trend])) / (self.geometry['stage'][-1] - self.geometry['stage'][start_trend])
-                    # add_vals = np.exp(add_stages * end_trend) + self.geometry[param][-1]
-                    add_vals = np.exp((add_stages * end_trend) + np.log(self.geometry[param][-1]))
-                elif scale == 'linear':
-                    end_trend = (self.geometry[param][-1] - self.geometry[param][start_trend]) / (self.geometry['stage'][-1] - self.geometry['stage'][start_trend])
-                    add_vals = (add_stages * end_trend) + self.geometry[param][-1]
-                elif scale == 'logx':
-                    end_trend = (self.geometry[param][-1] - self.geometry[param][start_trend]) / (np.log(self.geometry['stage'][-1]) - np.log(self.geometry['stage'][start_trend]))
-                    tmp_s = np.log(add_stages + self.geometry['stage'][-1]) - np.log(self.geometry['stage'][-1])
-                    add_vals = (tmp_s * end_trend) + self.geometry[param][-1]
-                elif scale == 'loglog':
-                    end_trend = (np.log(self.geometry[param][-1]) - np.log(self.geometry[param][start_trend])) / (np.log(self.geometry['stage'][-1]) - np.log(self.geometry['stage'][start_trend]))
-                    tmp_s = np.log(add_stages + self.geometry['stage'][-1]) - np.log(self.geometry['stage'][-1])
-                    add_vals = np.exp((tmp_s * end_trend) + np.log(self.geometry[param][-1]))
-                    
-                self.geometry[param] = np.append(self.geometry[param], add_vals)
-                ax.plot(np.append(self.geometry['stage'], add_stages + self.geometry['stage'][-1]), self.geometry[param], c='k', ls='--')
-
-                max_s = add_stages[-1] + self.geometry['stage'][-1]
-                c_tmp, WP_tmp, WPC_tmp, n_tmp, nCC_tmp, AREA_tmp, AREAC_tmp, R_tmp, So_tmp = self.get_geom_at_stage(max_s)
-                q_tmp = ((1/(((WP_tmp*n_tmp)+(WPC_tmp*nCC_tmp))/(WP_tmp+WPC_tmp))) * (AREA_tmp+AREAC_tmp) * (R_tmp**(2./3.)) * np.sqrt(So_tmp))
-                if param == 'discharge':
-                    ax.scatter(max_s, q_tmp, ec='r', fc='none', s=20)
-                elif param == 'celerity':
-                    ax.scatter(max_s, c_tmp, ec='r', fc='none', s=20)
-
-                ax.set(xlabel='Stage (m)', ylabel=param)
-                out_dir = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/retrospective/otter/2011/scott_working/extrapolation"
-                os.makedirs(out_dir, exist_ok=True)
-                existing_files = [int(f.split('.')[0]) for f in os.listdir(out_dir) if f.endswith('.png')]
-                if len(existing_files) == 0:
-                    existing_files = [0]
-                existing_files = np.max(existing_files)
-                fig.savefig(os.path.join(out_dir, f"{existing_files + 1}.png"), dpi=300)
-                plt.close(fig)
+            self.geometry['stage'] = np.append(self.geometry['stage'], add_stages + self.geometry['stage'][-1])
+            self.geometry['top_width'] = np.append(self.geometry['top_width'], add_widths)
+            self.geometry['area'] = np.append(self.geometry['area'], add_areas)
+            self.geometry['wetted_perimeter'] = np.append(self.geometry['wetted_perimeter'], add_wp)
+            self.geometry['hydraulic_radius'] = np.append(self.geometry['hydraulic_radius'], add_hr)
+            self.geometry['mannings_n'] = np.append(self.geometry['mannings_n'], add_n)
+            self.geometry['discharge'] = np.append(self.geometry['discharge'], add_q)
+            self.geometry['celerity'] = np.append(self.geometry['celerity'], add_c)
                 
-            add_stages = add_stages + self.geometry['stage'][-1]
-            self.geometry['stage'] = np.append(self.geometry['stage'], add_stages)
             assert max(inflows) < max(self.geometry['discharge']), 'Rating Curve does not cover range of flowrates in hydrograph'
 
         if lateral is None:
