@@ -22,6 +22,8 @@ def clean(df):
         df["datetime"] = df["datetime"].map(lambda x: x + " 00:00:00" if len(x) == 10 else x)
         df["datetime"] = pd.to_datetime(df["datetime"])
         df = df.set_index("datetime")
+    if 'NA' in df.columns:
+        df = df.drop(columns='NA')
     return df
 
 def find_root(reaches):
@@ -79,24 +81,29 @@ all_paths = [os.path.join(run_dir, f) for f in os.listdir(run_dir) if f.endswith
 for paths in all_paths:
     print(f'Processing {paths}')
 
-    # load data
+    # Establish file structure and paths
     if not os.path.exists(paths):
         create_project(paths)  # Optional make template
     with open(paths, 'r') as f:
         paths = json.load(f)
     lateral_path = paths['lateral_path']
-    head_path = paths['head_path']
-    lake_path = paths['lake_path']
+    inflow_path = paths['inflow_path']
     out_path = paths['meta_path']
-    if os.path.exists(out_path):
-        continue
-    meta_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/NWM/network/reach_data.csv"
-    param_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/NWM/working/RouteLink_CONUS.nc"
-    da_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/NWM/working/drain_areas.csv"
     geom_dir = paths['geometry_dir']
-    ds_hydrographs = os.path.join(paths['base_dir'], 'downstream_hydrographs.csv')
 
-    ds = pd.read_csv(ds_hydrographs)
+    ds_hydrographs = os.path.join(paths['base_dir'], 'downstream_hydrographs.csv')
+    head_path = os.path.join(paths['base_dir'], 'headwaters.csv')
+    lake_path = os.path.join(paths['base_dir'], 'lake.csv')
+    
+    meta_path = r"/netfiles/ciroh/floodplainsData/runs/NWM/network/reach_data.csv"
+    param_path = r"/netfiles/ciroh/floodplainsData/runs/NWM/working/RouteLink_CONUS.nc"
+    da_path = r"/netfiles/ciroh/floodplainsData/runs/NWM/working/drain_areas.csv"
+    if os.path.exists(out_path):
+        print(f'{out_path} already exists, skipping')
+        continue
+    
+    # Load data
+    ds = pd.read_csv(ds_hydrographs)  # treating this as the model domain
     ds = clean(ds)
     reaches = [int(i) for i in ds.columns]
     root = find_root(reaches)
@@ -154,13 +161,12 @@ for paths in all_paths:
         for l in lakes:
             # Find root of each lake
             lake_reaches = list(meta_df[meta_df['NHDWaterbodyComID'] == l].index)
-            lake_root = lake_reaches[0]
+            lake_root = lake_reaches[0]  # initialize
             outflow = meta_df.loc[lake_root, 'ds_comid']
             while outflow in lake_reaches:
-                lake_root = meta_df.loc[lake_root, 'ds_comid']
+                lake_root = meta_df.loc[lake_root, 'ds_comid']  # update lake root
                 outflow = meta_df.loc[lake_root, 'ds_comid']
             force_lakes.append(str(int(lake_root)))
-        # ds[force_lakes].to_csv(os.path.join(paths['base_dir'], 'lake2.csv'), index=False)
     except:
         force_lakes = list()
 
@@ -183,32 +189,35 @@ for paths in all_paths:
             prune_counter += 1
     print(f'Removed {prune_counter} reaches to align with headwater forcings')
 
-    # # Prune upstream of lake forcings
-    # lake_df = pd.read_csv(lake_path) 
-    # tmp_cols = list(lake_df.columns)
-    # tmp_cols.remove('Unnamed: 0')
-    # tmp_cols.remove('datetime')
-    # lakes = [float(c) for c in tmp_cols]
-    # prune_counter = 0
-    # for l in lakes:
-    #     # Find root of each lake
-    #     lake_reaches = list(meta_df[meta_df['NHDWaterbodyComID'] == l].index)
-    #     lake_root = lake_reaches[0]
-    #     outflow = meta_df.loc[lake_root, 'ds_comid']
-    #     while outflow in lake_reaches:
-    #         lake_root = meta_df.loc[lake_root, 'ds_comid']
-    #         outflow = meta_df.loc[lake_root, 'ds_comid']
-    #     lake_root_cache = meta_df.loc[lake_root]
-    #     us = list(meta_df[meta_df['ds_comid'] == lake_root].index)
-    #     while len(us) > 0:
-    #         tmp = us.pop()
-    #         us.extend(list(meta_df[meta_df['ds_comid'] == tmp].index))
-    #         meta_df = meta_df.drop(index=tmp).copy()
-    #         prune_counter += 1
-    #     meta_df.loc[lake_root] = lake_root_cache
-    # print(f'Removed {prune_counter} reaches to align with lake forcings')
+    # Check that all final network have valid geometry
+    geom_area_path = os.path.join(geom_dir, 'area.csv')
+    geom_area = pd.read_csv(geom_area_path)
+    valid_geom = geom_area.columns[~(geom_area == 0).all(axis=0)].astype(int)
+    missing_geom = list(set(meta_df.index).difference(set(valid_geom)))
+    if len(missing_geom) > 0:
+        print(f'Missing geometry for {len(missing_geom)} reaches')
+        print(missing_geom)
+    meta_df['valid_geom'] = meta_df.index.isin(valid_geom)
+
+    # make an inflows file
+    headwaters = list(set(meta_df.index).difference(set(meta_df['ds_comid'])))
+    headwaters = [str(h) for h in headwaters]
+    try:
+        inflow_df = ds[headwaters].copy()
+    except KeyError:
+        missing = list(set(headwaters).difference(set(ds.columns)))
+        missing_ds = pd.DataFrame(index=missing, columns=['missing_ds'])
+        missing_ds['missing_ds'] = True
+        missing_ds.to_csv(os.path.join(paths['base_dir'], 'missing_ds.csv'))
+        raise RuntimeError(f'Missing downstream reaches in {ds_hydrographs}')
+    inflow_df.to_csv(inflow_path)
+
+    # Make an initial conditions file
+    init_flow = pd.DataFrame(ds.loc[ds.index[0], meta_df.index.astype(str)])
+    init_flow = init_flow.rename(columns={ds.index[0]: 'init_discharge'})
+    init_flow.to_csv(paths['init_conditions_path'])
 
     # Export metadata
     meta_df['comid'] = meta_df.index
-    meta_df = meta_df[['comid', 'ds_comid', 'n', 'nCC', 'order', 'TotDASqKm', 'length', 'slope', 'ChSlp', 'BtmWdth', 'TopWdthCC', 'TopWdth', 'NHDWaterbodyComID', 'MusK', 'MusX', 'Kchan']]
+    meta_df = meta_df[['comid', 'ds_comid', 'n', 'nCC', 'order', 'TotDASqKm', 'length', 'slope', 'ChSlp', 'BtmWdth', 'TopWdthCC', 'TopWdth', 'NHDWaterbodyComID', 'MusK', 'MusX', 'Kchan', 'valid_geom']]
     meta_df.to_csv(out_path, index=False)

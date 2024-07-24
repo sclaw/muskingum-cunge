@@ -32,6 +32,7 @@ def clean_ts(df):
     if 'Unnamed: 0' in df.columns:
         df = df.drop(columns='Unnamed: 0')
     if 'datetime' in df.columns:
+        df = df[df['datetime'].notnull()]
         df["datetime"] = df["datetime"].map(lambda x: x + " 00:00:00" if len(x) == 10 else x)
         df["datetime"] = pd.to_datetime(df["datetime"])
         df = df.set_index("datetime")
@@ -59,7 +60,7 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
         bf = (tw - bw) / (z)
 
         if source == 'NWM':
-            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=50*bf, stage_resolution=1000)
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=12*bf, stage_resolution=1000)
         elif source == 'NWM_Regression':
             tw = 2.44 * (da ** 0.34)
             a_ch = 0.75 * (da ** 0.53)
@@ -67,7 +68,7 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
             bw = ((2 * a_ch) / bf) - tw
             z = (tw - bw) / bf
             tw_cc = 3 * tw
-            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=50*bf, stage_resolution=1000)
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=12*bf, stage_resolution=1000)
         elif source == 'HAND':
             try:
                 tw = hand_tw[r].to_numpy() / length
@@ -158,36 +159,14 @@ def execute(meta_path):
     lateral_df = clean_ts(lateral_df)
     lateral_df = lateral_df.reindex(sorted(lateral_df.columns), axis=1)
 
-    head_df = pd.read_csv(paths['head_path'])
-    head_df = clean_ts(head_df)
-    head_df = head_df.reindex(sorted(head_df.columns), axis=1)
-
-    lake_df = pd.read_csv(paths['lake_path'])
-    lake_df = clean_ts(lake_df)
-    lake_df = lake_df.reindex(sorted(lake_df.columns), axis=1)
-
-    downstream = pd.read_csv(os.path.join(paths['base_dir'], 'downstream_hydrographs.csv'))
-    downstream = clean_ts(downstream)
-    downstream = downstream.reindex(sorted(downstream.columns), axis=1)
-
-    # pre process lakes
-    tmp_cols = list(lake_df.columns)
-    lakes = [float(c) for c in tmp_cols]
-    for l in lakes:
-        # Find root of each lake
-        lake_reaches = list(meta_df[meta_df['NHDWaterbodyComID'] == l].index)
-        lake_root = lake_reaches[0]
-        outflow = meta_df.loc[lake_root, 'ds_comid']
-        while outflow in lake_reaches:
-            lake_root = meta_df.loc[lake_root, 'ds_comid']
-            outflow = meta_df.loc[lake_root, 'ds_comid']
-        head_df[lake_root] = downstream[lake_root]
+    inflow_df = pd.read_csv(paths['inflow_path'])
+    inflow_df = clean_ts(inflow_df)
+    inflow_df = inflow_df.reindex(sorted(inflow_df.columns), axis=1)
 
     # resample to 5 minute increments
-    resample_dt = pd.Timedelta('5m')
+    resample_dt = pd.Timedelta(paths['dt'])
     lateral_df = lateral_df.resample(resample_dt).ffill()
-    head_df = head_df.resample(resample_dt).ffill()
-    lake_df = lake_df.resample(resample_dt).ffill()
+    inflow_df = inflow_df.resample(resample_dt).ffill()
 
     # Error checking
     missing_forcings = list(set(meta_df.index).difference(set(lateral_df.columns)))
@@ -199,29 +178,27 @@ def execute(meta_path):
     reaches = load_geom(meta_df, source=paths['geometry_source'], geom_dir=paths['geometry_dir'])
 
     # export celerity curves
-    stages = {r: reaches[r].geometry['stage'] for r in reaches}
+    stages = {r: reaches[r].geometry['stage'] for r in reaches if type(reaches[r]) == CustomReach}
     stage_df = pd.DataFrame().from_dict(stages, orient='columns')
     stage_df.to_csv(os.path.join(paths['out_dir'], "stage.csv"))
-    celerities = {r: reaches[r].geometry['celerity'] for r in reaches}
+    celerities = {r: reaches[r].geometry['celerity'] for r in reaches if type(reaches[r]) == CustomReach}
     celerity_df = pd.DataFrame().from_dict(celerities, orient='columns')
     celerity_df.to_csv(os.path.join(paths['out_dir'], "celerity.csv"))
-    discharge = {r: reaches[r].geometry['discharge'] for r in reaches}
+    discharge = {r: reaches[r].geometry['discharge'] for r in reaches if type(reaches[r]) == CustomReach}
     discharge_df = pd.DataFrame().from_dict(discharge, orient='columns')
     discharge_df.to_csv(os.path.join(paths['out_dir'], "discharge.csv"))
                                  
     # Set up run
     network = Network(edge_dict)
     network.load_forcings(lateral_df)
-    network.load_headwater_forcings(head_df)
+    network.load_headwater_forcings(inflow_df)
     network.load_reaches(reaches)
 
     # Set up initial outflows
-    for n in network.post_order:
-        obs_out = downstream[n].to_numpy()[0]
-        if np.isnan(obs_out):
-            obs_out = None
-        network.init_outflows[n] = obs_out
-    network.load_initial_conditions(network.init_outflows)  # kind of unnecessary
+    init_outflows = pd.read_csv(paths['init_conditions_path'])
+    init_outflows = init_outflows.set_index('comid')
+    init_outflows = {str(r): init_outflows.loc[r, 'init_discharge'] for r in init_outflows.index}
+    network.load_initial_conditions(init_outflows)  # kind of unnecessary
 
     # Run model
     network.run_event(optimize_dx=paths['optimize_dx'], conserve_mass=paths['conserve_mass'], lat_addition=paths['lat_addition'])
