@@ -571,6 +571,8 @@ class WRFCompound(BaseReach):
                 'discharge': None}
         
         geom['stage'] = np.linspace(0, self.max_stage, self.resolution)
+        far_out_stages = np.exp(np.linspace(np.log(self.max_stage), np.log(10 * self.max_stage), 50))  # add some hail mary stages
+        geom['stage'] = np.append(geom['stage'], far_out_stages)
         for param in ['top_width', 'area', 'wetted_perimeter', 'hydraulic_radius', 'mannings_n', 'discharge', 'celerity']:
             geom[param] = np.zeros(geom['stage'].shape)
 
