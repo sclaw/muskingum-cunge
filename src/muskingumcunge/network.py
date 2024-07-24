@@ -77,7 +77,7 @@ class Network:
         t_start = time.perf_counter()
         dt = (self.forcing_df.index[1] - self.forcing_df.index[0]).seconds / 3600
         counter = 0
-        pct5 = int(len(self.post_order) / 20)
+        pct5 = int(len(self.post_order) / 20) + 1
         for node in self.post_order:
             counter += 1
             if counter % pct5 == 0:
