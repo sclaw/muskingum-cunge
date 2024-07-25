@@ -219,18 +219,21 @@ class BaseReach:
 
         # initialize secant method
         depth = np.interp(outflows[0], self.geometry['discharge'], self.geometry['stage'])
-        h     = (depth * 1.33) + mindepth
-        h_0   = (depth * 0.67)
 
         for i in range(len(inflows) - 1):
             if not ((inflows[i] > 0.0) or (inflows[i + 1] > 0.0) or (outflows[i] > 0.0)):
-                outflows.append(0.0)
+                depth = 0.0
+                qdc = 0.0
+                outflows.append(qdc)
                 continue
             Qj_0 = 0.0
             iter = 0
             rerror = 1.0
             aerror = 0.01
             tries = 0
+
+            h     = (depth * 1.33) + mindepth
+            h_0   = (depth * 0.67)
 
             while rerror > 0.01 and aerror >= mindepth and iter <= max_iter:
                 qup = inflows[i]
@@ -244,14 +247,17 @@ class BaseReach:
                 Ck = np.interp(h_0, self.geometry['stage'], self.geometry['celerity'])
                 Twl = np.interp(h_0, self.geometry['stage'], self.geometry['top_width'])
                 q = np.interp(h_0, self.geometry['stage'], self.geometry['discharge'])
-                
+
                 if Ck > 0.000000:
                     Km = max(dt, dx / Ck)
                 else:
                     Km = dt
                 
-                X = 0.5*(1-(Qj_0/(2.0*Twl*self.slope*Ck*dx)))
-                X = min(0.5, max(0.0, X))
+                if Ck > 0.0:
+                    X = 0.5*(1-(Qj_0/(2.0*Twl*self.slope*Ck*dx)))
+                    X = min(0.5, max(0.0, X))
+                else:
+                    X = 0.5
 
                 D = (Km*(1.000 - X) + dt/2.0000)
 
@@ -259,7 +265,7 @@ class BaseReach:
                 C2 = (dt/2.0000 - Km*X)/D
                 C3 = (Km*(1.00000000-X)-dt/2.000000)/D
                 C4 = (lateral[i]*dt)/D
-                Qj_0 = ((C1*quc) + (C2*qup) + (C3*qdp) + C4) - q
+                Qj_0 = ((C1*qup) + (C2*quc) + (C3*qdp) + C4) - q
 
                 # Upper Interval
                 Ck = np.interp(h, self.geometry['stage'], self.geometry['celerity'])
@@ -283,7 +289,7 @@ class BaseReach:
                 C2 = (dt/2.0000 - Km*X)/D
                 C3 = (Km*(1.00000000-X)-dt/2.000000)/D
                 C4 = (lateral[i]*dt)/D
-                Qj = ((C1*quc) + (C2*qup) + (C3*qdp) + C4) - q
+                Qj = ((C1*qup) + (C2*quc) + (C3*qdp) + C4) - q
 
                 # Secant Method
                 if Qj - Qj_0 != 0:
@@ -314,10 +320,17 @@ class BaseReach:
                         h_0 = h_0 * 0.67
                         max_iter += 25
 
-            qdc =  ((C1*qup)+(C2*quc)+(C3*qdp) + C4)
+            if ((C1*qup)+(C2*quc)+(C3*qdp) + C4) < 0:
+                if C4 < 0 and abs(C4) > ((C1*qup)+(C2*quc)+(C3*qdp)):
+                    qdc = 0.0
+                else:
+                    qdc =  max(((C1*qup)+(C2*quc)+C4), ((C1*qup)+(C3*qdp)+C4))
+            else:
+                qdc =  ((C1*qup)+(C2*quc)+(C3*qdp) + C4)
             if qdc < 0.0:
                 qdc = 0.0
             outflows.append(qdc)
+            depth = h
 
         return np.array(outflows)
 
@@ -576,22 +589,57 @@ class WRFCompound(BaseReach):
         for param in ['top_width', 'area', 'wetted_perimeter', 'hydraulic_radius', 'mannings_n', 'discharge', 'celerity']:
             geom[param] = np.zeros(geom['stage'].shape)
 
-        for ind, h_0 in enumerate(geom['stage']):
-            Ck, WP, WPC, n, nCC, AREA, AREAC, R, So = self.get_geom_at_stage(h_0)
-            if h_0 > self.bfd:
-                Twl = self.TwCC
-            else:
-                Twl = self.Bw + 2.0*self.z*h_0
-            q = ((1/(((WP*n)+(WPC*nCC))/(WP+WPC))) * (AREA+AREAC) * (R**(2./3.)) * np.sqrt(So))
-            geom['top_width'][ind] = Twl
-            geom['area'][ind] = AREA + AREAC
-            geom['wetted_perimeter'][ind] = WP + WPC
-            geom['hydraulic_radius'][ind] = R
-            geom['mannings_n'][ind] = ((n * WP) + (nCC * WPC)) / (WP + WPC)
-            geom['celerity'][ind] = Ck
-            geom['discharge'][ind] = q
-        
+        mask = geom['stage'] > self.bfd
+        vec_geom = self.vectorized_get_geom_at_stage(geom['stage'])  # Ck, WP, WPC, n, nCC, AREA, AREAC, R, So
+        geom['celerity'] = vec_geom[0]
+        geom['wetted_perimeter'] = vec_geom[1] + vec_geom[2]
+        geom['area'] = vec_geom[5] + vec_geom[6]
+        geom['hydraulic_radius'] = vec_geom[7]
+        geom['mannings_n'] = ((vec_geom[3] * vec_geom[1]) + (vec_geom[4] * vec_geom[2])) / (vec_geom[1] + vec_geom[2])
+        Twl = self.Bw + 2.0*self.z*geom['stage']
+        Twl[mask] = self.TwCC
+        geom['top_width'] = Twl
+        geom['discharge'] = ((1/geom['mannings_n']) * geom['area'] * (geom['hydraulic_radius']**(2./3.)) * np.sqrt(self.So))
+        np.any(np.isnan(geom['discharge']))
+
         self.geometry = geom
+
+    def vectorized_get_geom_at_stage(self, h_0):
+        Bw = self.Bw
+        bfd = self.bfd
+        z = self.z
+        TwCC = self.TwCC
+        So = self.So
+        n = self.n
+        nCC = self.nCC
+        mask = h_0 > bfd
+
+        # get areas
+        AREA = (Bw + h_0 * z) * h_0
+        AREA[mask] = (Bw + bfd * z) * bfd
+        AREAC = np.zeros_like(AREA)
+        AREAC[mask] = (TwCC * (h_0 - bfd))[mask]
+
+        # get wetted perimeters
+        WP = (Bw + 2.0 * h_0 * np.sqrt(1.0 + z*z))
+        WP[mask] = (Bw + 2.0 * bfd * np.sqrt(1.0 + z*z))
+        WPC = np.zeros_like(WP)
+        WPC[mask] = (TwCC + (2.0 * (h_0 - bfd)))[mask]
+
+        # get hydraulic radius
+        R = (AREA + AREAC) / (WP + WPC)
+        R[np.isnan(R)] = 0
+
+        # get overbank celerity
+        Ck = (np.sqrt(So)/n)*((5./3.)*R**(2./3.) - ((2./3.)*R**(5./3.)*(2.0*np.sqrt(1.0 + z*z)/(Bw+2.0*h_0*z))))
+        tmp_a = AREA+AREAC
+        tmp_a[tmp_a < 0.001] = 0.001
+        tmp_d = h_0 - bfd
+        tmp_d[tmp_d < 0] = 0
+        Ck[mask] = (((np.sqrt(So)/n)*((5./3.)*R**(2./3.) - ((2./3.)*R**(5./3.)*(2.0*np.sqrt(1.0 + z*z)/(Bw+2.0*bfd*z))))*AREA + ((np.sqrt(So)/(nCC))*(5./3.)*(tmp_d)**(2./3.))*AREAC)/(tmp_a))[mask]
+        Ck = np.maximum(0.0, Ck)
+
+        return Ck, WP, WPC, n, nCC, AREA, AREAC, R, So
 
     def get_geom_at_stage(self, h_0):
         Bw = self.Bw
