@@ -36,11 +36,14 @@ def clean_ts(df):
         df["datetime"] = df["datetime"].map(lambda x: x + " 00:00:00" if len(x) == 10 else x)
         df["datetime"] = pd.to_datetime(df["datetime"])
         df = df.set_index("datetime")
+    df = df.astype(np.float64)
+    if 'NA' in df.columns:
+        df = df.drop(columns='NA')
     return df
 
 def load_geom(meta_df, source='NWM', geom_dir=None):
     reaches = dict()
-    geom_error_count = 0
+    missing_geom = list()
     if source == 'HAND':
         hand_tw = pd.read_csv(os.path.join(geom_dir, 'area.csv'))
         hand_el = pd.read_csv(os.path.join(geom_dir, 'el.csv'))
@@ -60,7 +63,7 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
         bf = (tw - bw) / (z)
 
         if source == 'NWM':
-            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=12*bf, stage_resolution=1000)
+            reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=100*bf, stage_resolution=10000)
         elif source == 'NWM_Regression':
             tw = 2.44 * (da ** 0.34)
             a_ch = 0.75 * (da ** 0.53)
@@ -85,15 +88,18 @@ def load_geom(meta_df, source='NWM', geom_dir=None):
                 # Error catching.  Default to NWM channel
                 print(f'Error loading HAND data for reach {r}.  Defaulting to NWM channel')
                 print(f'Error: {e}')
-                geom_error_count += 1
+                missing_geom.append(r)
                 reaches[r] = WRFCompound(bw, z, bf, tw_cc, ch_n, fp_n, slope, length, max_stage=12*bf, stage_resolution=len(hand_tw))
         elif source == 'MUSKINGUM':
             x = meta_df.loc[r, 'MusX']
             k = meta_df.loc[r, 'MusK']
             reaches[r] = MuskingumReach(k, x)
+    
+    if len(missing_geom) > 0:
+        print(f'Error loading {len(missing_geom)} / {len(reaches)} reaches')
+        print(missing_geom)
 
-    print(f'Error loading {geom_error_count} / {len(reaches)} reaches')
-    return reaches
+    return reaches, missing_geom
 
 def execute_by_reach(meta_path):
     # Load data
@@ -172,11 +178,15 @@ def execute(meta_path):
     missing_forcings = list(set(meta_df.index).difference(set(lateral_df.columns)))
     print(f'Missing forcing data for: {missing_forcings}')
 
-    network = Network(edge_dict)
-
     # Set up reaches
-    reaches = load_geom(meta_df, source=paths['geometry_source'], geom_dir=paths['geometry_dir'])
-
+    reaches, missing_geom = load_geom(meta_df, source=paths['geometry_source'], geom_dir=paths['geometry_dir'])
+    geom_status_df = pd.DataFrame(index=meta_df.index)
+    geom_status_df['valid_geom'] = ~meta_df.index.isin(missing_geom)
+    try:
+        geom_status_df.to_csv(os.path.join(paths['out_dir'], "geom_status.csv"))
+    except PermissionError:
+        print("Error writing geom_status.csv.  Check permissions")
+        
     # export celerity curves
     stages = {r: reaches[r].geometry['stage'] for r in reaches if type(reaches[r]) == CustomReach}
     stage_df = pd.DataFrame().from_dict(stages, orient='columns')
@@ -198,6 +208,9 @@ def execute(meta_path):
     init_outflows = pd.read_csv(paths['init_conditions_path'])
     init_outflows = init_outflows.set_index('comid')
     init_outflows = {str(r): init_outflows.loc[r, 'init_discharge'] for r in init_outflows.index}
+    for r in init_outflows:
+        if np.isnan(init_outflows[r]):
+            init_outflows[r] = None
     network.load_initial_conditions(init_outflows)  # kind of unnecessary
 
     # Run model
