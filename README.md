@@ -4,7 +4,7 @@
 
 ## Overview
 `muskingumcunge` is a Python implementation of the Musking-Cunge model, a channel routing method that allows for the 
-estimation of a hydrograph's lag and attenuation as it propogates downstream through a river network.  In this formulation, 
+estimation of a hydrograph's lag and attenuation as it propogates downstream through a river network.  In this implementation, 
 the Muskingum-Cunge method uses cross-sectional geometry and a Manning's flow assumption to derive parameters of the 
 Muskingum method (K and X) at each timestep.
 
@@ -49,8 +49,15 @@ Current functonality of this package includes
 - Derivation of stage-discharge rating curve and Muskingum Parameters
 - Simple synthetic unit hydrograph generation
 - Muskingum-Cunge routing
+- Basinwide Muskingum-Cunge routing
 
 Hopefully more reatures to come!!
+
+## Citation
+
+[![DOI](https://zenodo.org/badge/678116550.svg)](https://zenodo.org/doi/10.5281/zenodo.13128293)
+
+Scott Lawson - UVM. (2024). sclaw/muskingum-cunge: Alpha Release (alpha). Zenodo. https://doi.org/10.5281/zenodo.13128294
 
 ## Installation
 
