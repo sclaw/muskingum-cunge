@@ -7,6 +7,7 @@ from muskingumcunge.reach import CustomReach
 from scipy.ndimage import gaussian_filter1d
 from statsmodels.nonparametric.smoothers_lowess import lowess
 import time
+import sys
 
 
 ### Static Data ###
@@ -75,6 +76,7 @@ def execute(meta_path, debug_plots=False):
     reach_data = pd.read_csv(run_dict['reach_meta_path'])
     reach_data[run_dict['id_field']] = reach_data[run_dict['id_field']].astype(np.int64).astype(str)
     reach_data = reach_data.set_index(run_dict['id_field'])
+    mannings_n = 0.095
 
     # Setup Hydrographs
     hydrographs = ['Q2_Short', 'Q2_Medium', 'Q2_Long', 'Q10_Short', 'Q10_Medium', 'Q10_Long', 'Q50_Short', 'Q50_Medium', 'Q50_Long', 'Q100_Short', 'Q100_Medium', 'Q100_Long']
@@ -97,7 +99,7 @@ def execute(meta_path, debug_plots=False):
     counter = 1
     t_start = time.perf_counter()
     reaches = reach_data.index.to_list()
-    for reach in reaches[625:]:
+    for reach in reaches:
         print(f'{counter} / {len(reaches)} | {round((len(reaches) - counter) * ((time.perf_counter() - t_start) / counter), 1)} seconds left | {(len(reaches) - counter)} left | | {((time.perf_counter() - t_start) / counter)} rate')
         counter += 1
 
@@ -136,7 +138,7 @@ def execute(meta_path, debug_plots=False):
             continue
 
         # Create reach
-        mc_reach = CustomReach(0.035, slope, 1000, tmp_geom['el'], tmp_geom['area'], tmp_geom['vol'], tmp_geom['p'])
+        mc_reach = CustomReach(mannings_n, slope, 1000, tmp_geom['el'], tmp_geom['area'], tmp_geom['vol'], tmp_geom['p'])
 
         # Route hydrographs
         results_dict[run_dict['id_field']].append(reach)
@@ -234,7 +236,7 @@ def execute(meta_path, debug_plots=False):
             outflows = inflows.copy()
             for iter in range(subreaches):
                 try:
-                    outflows = mc_reach.route_hydrograph_c(outflows, dt)
+                    outflows = mc_reach.route_hydrograph(outflows, (dt * 60 * 60), lateral=None, initial_outflow=None, short_ts=False, solver='fread-c')
                 except AssertionError:
                     outflows = np.repeat(np.nan, outflows.shape[0])
                     break
@@ -244,7 +246,7 @@ def execute(meta_path, debug_plots=False):
             attenuation_per_km = raw_attenuation / (dx * subreaches / 1000)
             pct_attenuation = raw_attenuation / inflows.max()
             pct_attenuation_km = (1 - ((1 - pct_attenuation) ** (1000 / (dx * subreaches))))
-            tmp_diff_number = ((9 * np.pi) / 50) * (((0.035 ** (6 / 5)) * (max(inflows) ** (1 / 5))) / (((slope * 100) ** (8 / 5)) * (dt * 20)))
+            tmp_diff_number = ((9 * np.pi) / 50) * (((mannings_n ** (6 / 5)) * (max(inflows) ** (1 / 5))) / (((slope * 100) ** (8 / 5)) * (dt * 20)))
             peak_loc = np.argmax(outflows)
             dqs = outflows[1:] - outflows[:-1]
             rising_dqs = np.abs(dqs[:peak_loc])
@@ -303,8 +305,8 @@ def execute(meta_path, debug_plots=False):
     out_data = pd.DataFrame(results_dict)
     out_data = out_data.set_index(run_dict['id_field'])
     os.makedirs(os.path.dirname(run_dict['muskingum_path']), exist_ok=True)
-    # out_data.to_csv(run_dict['muskingum_path'])
+    out_data.to_csv(run_dict['muskingum_path'])
 
 if __name__ == '__main__':
-    run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/8/run_metadata.json"
-    execute(run_path, debug_plots=True)
+    run_path = sys.argv[1]
+    execute(run_path, debug_plots=False)
