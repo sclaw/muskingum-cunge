@@ -72,10 +72,10 @@ class Network:
         # loads initial outflows for each reach
         self.init_outflows = initial_conditions
 
-    def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle'):
+    def run_event(self, optimize_dx=True, conserve_mass=False, lat_addition='middle', short_ts=False):
         # calculate total inflow
         t_start = time.perf_counter()
-        dt = (self.forcing_df.index[1] - self.forcing_df.index[0]).seconds / 3600
+        dt = (self.forcing_df.index[1] - self.forcing_df.index[0]).seconds
         counter = 0
         pct5 = int(len(self.post_order) / 20) + 1
         for node in self.post_order:
@@ -113,7 +113,7 @@ class Network:
                         init_out = self.init_outflows[node]
                     else:
                         init_out = None
-                    routed = reach.route_hydrograph_wrf_secant(routed, dt, lateral=l, initial_outflow=init_out)
+                    routed = reach.route_hydrograph(routed, dt, lateral=l, initial_outflow=init_out, short_ts=short_ts, solver='wrf-c')
                 except AssertionError as e:
                     print(f"Error routing {node}: {e}")
             
