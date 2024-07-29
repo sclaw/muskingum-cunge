@@ -75,8 +75,10 @@ def extract_from_root(root):
     return df
 
 
-run_dir = r'/netfiles/ciroh/floodplainsData/retrospective/basin_run_files'
+run_dir = r'/netfiles/ciroh/floodplainsData/retrospective/basin_run_files/MSQ'
 all_paths = [os.path.join(run_dir, f) for f in os.listdir(run_dir) if f.endswith('.json')]
+# all_paths = [r'/netfiles/ciroh/floodplainsData/retrospective/basin_run_files/lamoille_2019_hand.json']
+
 
 for paths in all_paths:
     print(f'Processing {paths}')
@@ -98,9 +100,9 @@ for paths in all_paths:
     meta_path = r"/netfiles/ciroh/floodplainsData/runs/NWM/network/reach_data.csv"
     param_path = r"/netfiles/ciroh/floodplainsData/runs/NWM/working/RouteLink_CONUS.nc"
     da_path = r"/netfiles/ciroh/floodplainsData/runs/NWM/working/drain_areas.csv"
-    if os.path.exists(out_path):
-        print(f'{out_path} already exists, skipping')
-        continue
+    # if os.path.exists(out_path):
+    #     print(f'{out_path} already exists, skipping')
+    #     continue
     
     # Load data
     ds = pd.read_csv(ds_hydrographs)  # treating this as the model domain
@@ -152,11 +154,8 @@ for paths in all_paths:
 
     # Add lakes to headwater forcings
     try:
-        lake_df = pd.read_csv(lake_path) 
-        tmp_cols = list(lake_df.columns)
-        tmp_cols.remove('Unnamed: 0')
-        tmp_cols.remove('datetime')
-        lakes = [float(c) for c in tmp_cols]
+        lakes = meta_df['NHDWaterbodyComID'].unique()
+        lakes = lakes[lakes != -9999]
         force_lakes = list()
         for l in lakes:
             # Find root of each lake
