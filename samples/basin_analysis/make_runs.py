@@ -14,6 +14,7 @@ def create_project(data_path, run_path, geom_type):
         "dt": "5m",
         "optimize_dx": False,
         "conserve_mass": False,
+        "short_ts": True,
         "lat_addition": "top",
         "id_field": "comid",
         "to_id_field": "ds_comid",
