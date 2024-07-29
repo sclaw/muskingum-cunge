@@ -7,6 +7,7 @@ from muskingumcunge.reach import CustomReach
 from scipy.ndimage import gaussian_filter1d
 from statsmodels.nonparametric.smoothers_lowess import lowess
 import time
+import sys
 
 
 ### Static Data ###
@@ -235,7 +236,7 @@ def execute(meta_path, debug_plots=False):
             outflows = inflows.copy()
             for iter in range(subreaches):
                 try:
-                    outflows = mc_reach.route_hydrograph_c(outflows, dt)
+                    outflows = mc_reach.route_hydrograph(outflows, (dt * 60 * 60), lateral=None, initial_outflow=None, short_ts=False, solver='fread-c')
                 except AssertionError:
                     outflows = np.repeat(np.nan, outflows.shape[0])
                     break
@@ -307,5 +308,5 @@ def execute(meta_path, debug_plots=False):
     out_data.to_csv(run_dict['muskingum_path'])
 
 if __name__ == '__main__':
-    run_path = r"/users/k/l/klawson1/netfiles/ciroh/floodplainsData/runs/9/run_metadata.json"
+    run_path = sys.argv[1]
     execute(run_path, debug_plots=False)

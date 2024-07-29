@@ -1,0 +1,16 @@
+name: floodplains_muskingum
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - matplotlib
+  - ca-certificates
+  - openssl
+  - scipy
+  - certifi
+  - anaconda::cython
+  - pandas
+  - anaconda::pillow
+  - statsmodels
+  - anaconda::seaborn
+prefix: /users/k/l/klawson1/.conda/envs/floodplains_muskingum

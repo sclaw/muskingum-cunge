@@ -16,7 +16,7 @@ inflows = parabolic_hydrograph_generator(timestamps, peak, duration)
 reach = TrapezoidalReach(100, 100, 0.1, 0.001, 2000)
 
 # Route flows
-outflows = reach.route_hydrograph(inflows, 0.1)
+outflows = reach.route_hydrograph(inflows, 360, solver='fread')
 
 # Plot results
 fig, ax = plt.subplots()
@@ -26,4 +26,5 @@ ax.set_xlabel('Time(hrs)')
 ax.set_ylabel('Flowrate(cms)')
 plt.legend()
 plt.tight_layout()
-plt.show()
+plt.savefig('simple_routing.png', dpi=300)
+# plt.show()
